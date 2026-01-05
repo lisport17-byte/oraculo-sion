@@ -1,0 +1,14 @@
+{
+  "name": "puente-oraculo",
+  "version": "1.0.0",
+  "description": "Traductor de señales para el Oraculo",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2",
+    "axios": "^1.6.2"
+  }
+}
