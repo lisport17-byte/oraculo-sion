@@ -15,7 +15,7 @@ app.post('/webhook', async (req, res) => {
     try {
         const completion = await groq.chat.completions.create({
             messages: [{ role: "user", content: `Analiza esta señal: ${textoTradingView}. Responde en una frase corta si es buena oportunidad.` }],
-            model: "llama3-8b-8192",
+            model: "llama-3.3-70b-versatile",
         });
 
         const analisisIA = completion.choices[0]?.message?.content || "IA analizando...";
