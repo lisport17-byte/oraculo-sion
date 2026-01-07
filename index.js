@@ -10,31 +10,37 @@ const TOKEN = process.env.TOKEN;
 const ID = process.env.ID;
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// Función para evitar que caracteres extraños rompan el HTML de Telegram
+const cleanHTML = (str) => str.replace(/[&<>]/g, tag => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;'
+}[tag] || tag));
+
 app.post('/webhook', async (req, res) => {
-    // 1. Recibimos el JSON completo desde TradingView
     const data = req.body; 
     
-    // Extraemos las piezas del rompecabezas
-    // Si algún dato falta, usamos valores por defecto para evitar errores
-    const asset = data.asset || "Activo Desconocido";
-    const action = data.action || "SEÑAL";
-    const price = data.price || "N/A";
-    const sl = data.sl || "Sin definir";
-    const tp = data.tp || "Sin definir";
-    const tf = data.tf || "N/A";
+    // Si TradingView envía el JSON como string, lo parseamos (seguridad extra)
+    const payload = typeof data === 'string' ? JSON.parse(data) : data;
+
+    const asset = payload.asset || "Activo Desconocido";
+    const action = payload.action || "SEÑAL";
+    const price = payload.price || "N/A";
+    const sl = payload.sl || "Sin definir";
+    const tp = payload.tp || "Sin definir";
+    const tf = payload.tf || "N/A";
 
     try {
-        // 2. IA ANALYZER: Le enviamos contexto real a Groq
-        const promptIA = `Analiza esta señal de trading: ${action} en ${asset} a precio ${price}. SL: ${sl}, TP: ${tp}. Responde en una sola frase muy corta si es buena oportunidad o qué precaución técnica tomar según la estructura.`;
+        const promptIA = `Analiza esta señal de trading: ${action} en ${asset}. SL: ${sl}, TP: ${tp}. Responde en una sola frase muy corta si es buena oportunidad.`;
         
         const completion = await groq.chat.completions.create({
             messages: [{ role: "user", content: promptIA }],
             model: "llama-3.3-70b-versatile",
         });
 
-        const analisisIA = completion.choices[0]?.message?.content || "Análisis no disponible en este momento.";
+        // Limpiamos la respuesta de la IA para que no rompa el HTML
+        const analisisIA = cleanHTML(completion.choices[0]?.message?.content || "Análisis no disponible.");
 
-        // 3. DISEÑO DE MENSAJE ÉLITE (HTML)
         const mensajeFinal = `🚀 <b>ORDEN DE LA ÉLITE v5.0</b> 🚀\n\n` +
                              `<b>Activo:</b> ${asset}\n` +
                              `<b>Acción:</b> ${action === 'BUY' ? 'COMPRA 📈' : 'VENTA 📉'}\n` +
@@ -45,22 +51,21 @@ app.post('/webhook', async (req, res) => {
                              `<b>TAKE PROFIT:</b> ${tp}\n\n` +
                              `🤖 <b>IA ANALYZER:</b> <i>${analisisIA}</i>`;
 
-        // 4. Envío a Telegram
         await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
             chat_id: ID,
             text: mensajeFinal,
             parse_mode: "HTML"
         });
 
-        res.status(200).send('Señal procesada por la Élite');
+        res.status(200).send('Señal procesada');
     } catch (e) {
-        console.error("Error en el sistema:", e.message);
-        res.status(500).send('Error interno en Render');
+        // Log detallado para saber si el error es de Telegram o de Groq
+        console.error("Error detallado:", e.response ? e.response.data : e.message);
+        res.status(500).send('Error interno');
     }
 });
 
-// Ruta de salud para Render
-app.get('/webhook', (req, res) => res.send('IA de Sion Operativa - Frecuencia Morpho 548'));
+app.get('/webhook', (req, res) => res.send('IA de Sion Operativa'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor activo`));
