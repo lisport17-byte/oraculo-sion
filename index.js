@@ -31,7 +31,16 @@ app.post('/webhook', async (req, res) => {
     const tf = payload.tf || "N/A";
 
     try {
-        const promptIA = `Analiza esta señal de trading: ${action} en ${asset}. SL: ${sl}, TP: ${tp}. Responde en una sola frase muy corta si es buena oportunidad.`;
+      // --- NUEVO PROMPT PROFESIONAL ---
+const promptIA = `Actúa como un Senior Quants Trader de Wall Street. 
+Analiza esta señal: ${action} en ${asset} a precio ${price}. 
+Stop Loss: ${sl}, Take Profit: ${tp}. Temporalidad: ${tf} minutos.
+
+Tu análisis debe:
+1. Determinar si es una operación de Scalping o Swing (largo plazo).
+2. Evaluar el riesgo/beneficio (R:R).
+3. Dar una advertencia técnica basada en el movimiento institucional.
+4. Responder en un tono serio, profesional y breve (máximo 3 frases).`;
         
         const completion = await groq.chat.completions.create({
             messages: [{ role: "user", content: promptIA }],
