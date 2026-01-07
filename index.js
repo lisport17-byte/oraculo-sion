@@ -31,6 +31,16 @@ app.post('/webhook', async (req, res) => {
         const tp = payload.tp || "Sin definir";
         const tf = payload.tf || "N/A";
 
+        // Dentro de app.post('/webhook', ...)
+const liquidez = payload.liquidez || "Analizando zonas de oferta/demanda";
+
+// Actualiza tu Prompt para que la IA use la liquidez
+const promptIA = `Actúa como un Senior Quants Trader. 
+Analiza esta señal: ${action} en ${asset}.
+Objetivo de Liquidez: ${liquidez}. 
+${isSMC ? "ADVERTENCIA: Quiebre estructural detectado." : ""}
+... (resto del prompt)`;
+
         // --- LÓGICA DE DETECCIÓN ESTRUCTURAL (CHoCH / BOS) ---
         const isSMC = action.toUpperCase().includes("CHOCH") || action.toUpperCase().includes("BOS");
         const emojiAccion = (action.toUpperCase().includes('BUY') || action.toUpperCase().includes('LIZ') || action.toUpperCase().includes('BULL')) ? '📈' : '📉';
