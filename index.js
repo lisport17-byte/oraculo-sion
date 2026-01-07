@@ -1,80 +1,27 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const axios = require('axios');
-const Groq = require('groq-sdk');
-
-const app = express();
-app.use(bodyParser.json());
-
-const TOKEN = process.env.TOKEN;
-const ID = process.env.ID;
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-// Función para evitar que caracteres extraños rompan el HTML de Telegram
-const cleanHTML = (str) => str.replace(/[&<>]/g, tag => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;'
-}[tag] || tag));
-
-app.post('/webhook', async (req, res) => {
-    const data = req.body; 
+// Nueva lógica para detectar CHoCH o BOS
+    const isSMC = action.includes("CHOCH") || action.includes("BOS");
     
-    // Si TradingView envía el JSON como string, lo parseamos (seguridad extra)
-    const payload = typeof data === 'string' ? JSON.parse(data) : data;
+    // Ajustamos el Prompt para que la IA entienda el CHoCH
+    const promptIA = `Actúa como un Senior Quants Trader. 
+    Analiza esta señal: ${action} en ${asset} a precio ${price}. 
+    ${isSMC ? "ADVERTENCIA: Se ha detectado un cambio de estructura (SMC)." : ""}
+    Stop Loss: ${sl}, Take Profit: ${tp}. Temporalidad: ${tf} min.
 
-    const asset = payload.asset || "Activo Desconocido";
-    const action = payload.action || "SEÑAL";
-    const price = payload.price || "N/A";
-    const sl = payload.sl || "Sin definir";
-    const tp = payload.tp || "Sin definir";
-    const tf = payload.tf || "N/A";
+    Tu análisis debe:
+    1. Si es ${action} tipo CHOCH, explicar si es un cambio de tendencia inminente.
+    2. Evaluar el riesgo/beneficio (R:R).
+    3. Responder con máxima autoridad financiera en 3 frases.`;
 
-    try {
-      // --- NUEVO PROMPT PROFESIONAL ---
-const promptIA = `Actúa como un Senior Quants Trader de Wall Street. 
-Analiza esta señal: ${action} en ${asset} a precio ${price}. 
-Stop Loss: ${sl}, Take Profit: ${tp}. Temporalidad: ${tf} minutos.
+    // Ajuste en el diseño del mensaje para Telegram
+    const emojiAccion = action.includes('BUY') || action.includes('Bullish') ? '📈' : '📉';
+    const titulo = isSMC ? "⚠️ CAMBIO DE ESTRUCTURA DETECTADO" : "🚀 ORDEN DE LA ÉLITE v5.0";
 
-Tu análisis debe:
-1. Determinar si es una operación de Scalping o Swing (largo plazo).
-2. Evaluar el riesgo/beneficio (R:R).
-3. Dar una advertencia técnica basada en el movimiento institucional.
-4. Responder en un tono serio, profesional y breve (máximo 3 frases).`;
-        
-        const completion = await groq.chat.completions.create({
-            messages: [{ role: "user", content: promptIA }],
-            model: "llama-3.3-70b-versatile",
-        });
-
-        // Limpiamos la respuesta de la IA para que no rompa el HTML
-        const analisisIA = cleanHTML(completion.choices[0]?.message?.content || "Análisis no disponible.");
-
-        const mensajeFinal = `🚀 <b>ORDEN DE LA ÉLITE v5.0</b> 🚀\n\n` +
-                             `<b>Activo:</b> ${asset}\n` +
-                             `<b>Acción:</b> ${action === 'BUY' ? 'COMPRA 📈' : 'VENTA 📉'}\n` +
-                             `<b>Precio Entradas:</b> ${price}\n` +
-                             `<b>Temporalidad:</b> ${tf}\n\n` +
-                             `🛡️ <b>ZONAS DE PROTECCIÓN</b>\n` +
-                             `<b>STOP LOSS:</b> ${sl}\n` +
-                             `<b>TAKE PROFIT:</b> ${tp}\n\n` +
-                             `🤖 <b>IA ANALYZER:</b> <i>${analisisIA}</i>`;
-
-        await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
-            chat_id: ID,
-            text: mensajeFinal,
-            parse_mode: "HTML"
-        });
-
-        res.status(200).send('Señal procesada');
-    } catch (e) {
-        // Log detallado para saber si el error es de Telegram o de Groq
-        console.error("Error detallado:", e.response ? e.response.data : e.message);
-        res.status(500).send('Error interno');
-    }
-});
-
-app.get('/webhook', (req, res) => res.send('IA de Sion Operativa'));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor activo`));
+    const mensajeFinal = `<b>${titulo}</b>\n\n` +
+                         `<b>Activo:</b> ${asset}\n` +
+                         `<b>Evento:</b> ${action} ${emojiAccion}\n` +
+                         `<b>Precio:</b> ${price}\n` +
+                         `<b>Temporalidad:</b> ${tf}\n\n` +
+                         `🛡️ <b>ZONAS DE PROTECCIÓN</b>\n` +
+                         `<b>SL:</b> ${sl}\n` +
+                         `<b>TP:</b> ${tp}\n\n` +
+                         `🤖 <b>IA ANALYZER:</b> <i>${analisisIA}</i>`;
