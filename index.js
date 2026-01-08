@@ -1,5 +1,3 @@
-// ... (mantenemos express, axios y groq)
-
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
@@ -11,27 +9,29 @@ app.post('/webhook', async (req, res) => {
         const tf = payload.tf || "15m";
         const liquidez = payload.liquidez || "Zonas de oferta/demanda";
 
-        // 1. LLAMADA A LA IA CON TU PROMPT EVOLUCIONADO
+        // EL PROMPT DEBE IR AQUÍ PARA CAPTURAR LOS DATOS
+        const promptIA = `Actúa como un Senior Quant Trader de Wall Street. 
+        Analiza: ${action} en ${asset} a precio ${price}. TF: ${tf}. Liquidez: ${liquidez}.
+        1. Define valor numérico exacto para STOP LOSS. 
+        2. Define valor numérico exacto para TAKE PROFIT (R:R 1:3).
+        3. Determina Scalping o Swing.
+        4. Justifica brevemente.
+        Responde conciso: primero niveles y luego técnica en menos de 30 palabras.`;
+
         const completion = await groq.chat.completions.create({
-            messages: [{ role: "user", content: promptIA }], // Aquí va el prompt que revisamos arriba
+            messages: [{ role: "user", content: promptIA }],
             model: "llama-3.3-70b-versatile",
         });
 
         const analisisIA = cleanHTML(completion.choices[0]?.message?.content || "");
 
-        // 2. EXTRACCIÓN DE NIVELES (Para el cálculo de lotaje)
-
-        // Responde de forma concisa. Primero entrega los niveles numéricos y luego la justificación técnica en menos de 30 palabras
+        // EXTRACCIÓN DE NIVELES
+        const numerosEncontrados = analisisIA.match(/\d+(\.\d+)?/g) || [];
+        const slIA = numerosEncontrados[0] || null; 
         
-        // Buscamos números en el texto de la IA para calcular el riesgo
-        
-        const numerosEncontrados = analisisIA.match(/\d+\.\d+/g) || [];
-        const slIA = numerosEncontrados[0] || null; // Asumimos que el primer número es el SL
-        
-        // Calculamos lotaje con tus $25 de riesgo
         const lotajeSugerido = slIA ? calcularLotaje(asset, price, slIA) : "Pendiente";
 
-        // 3. CONSTRUCCIÓN VISUAL ELITE (Tu diseño deseado)
+        // CONSTRUCCIÓN VISUAL ELITE
         const mensajeFinal = 
 `🚨 <b>ORDEN DE LA ÉLITE</b> 🚨
 
@@ -57,6 +57,7 @@ app.post('/webhook', async (req, res) => {
 
         res.status(200).send('OK');
     } catch (e) {
+        console.error(e);
         res.status(500).send('Error');
     }
 });
