@@ -1,87 +1,62 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const axios = require('axios');
-const Groq = require('groq-sdk');
-
-const app = express();
-app.use(bodyParser.json());
-
-const TOKEN = process.env.TOKEN;
-const ID = process.env.ID;
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-const cleanHTML = (str) => str.replace(/[&<>]/g, tag => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;'
-}[tag] || tag));
+// ... (mantenemos express, axios y groq)
 
 app.post('/webhook', async (req, res) => {
     try {
         const data = req.body;
         const payload = typeof data === 'string' ? JSON.parse(data) : data;
 
-        // 1. Extracción de Datos
-        const asset    = payload.asset || "Activo Desconocido";
-        const action   = payload.action || "SEÑAL";
-        const price    = payload.price || "N/A";
-        const tf       = payload.tf || "N/A";
-        const liquidez = payload.liquidez || "Analizando zonas de oferta/demanda";
+        const asset = payload.asset || "Activo";
+        const action = payload.action || "SEÑAL";
+        const price = payload.price || "0";
+        const tf = payload.tf || "15m";
+        const liquidez = payload.liquidez || "Zonas de oferta/demanda";
 
-        // 2. Lógica de Detección
-        const isSMC = action.toUpperCase().includes("CHOCH") || action.toUpperCase().includes("BOS");
-        const emojiAccion = (action.toUpperCase().includes('BUY') || action.toUpperCase().includes('LIZ') || action.toUpperCase().includes('BULL')) ? '📈' : '📉';
-
-        // 3. Prompt Evolucionado: Solicitud de Niveles Numéricos Específicos
-        // Aquí pedimos a la IA que calcule SL y TP basados en estructura real
-        const promptIA = `Actúa como un Senior Quant Trader de Wall Street. 
-Analiza esta operación: ${action} en ${asset} a precio ${price}. 
-Temporalidad: ${tf}. Contexto de Liquidez: ${liquidez}.
-
-TU TAREA TÉCNICA:
-1. Define un valor numérico exacto para STOP LOSS. Si es SELL, úsalo sobre el Strong High o una estructura más cercana si el momentum es débil. Si es BUY, bajo el Strong Low.
-2. Define un valor numérico exacto para TAKE PROFIT buscando un R:R de 1:3 hacia la liquidez.
-3. Determina si es Scalping o Swing.
-4. Explica brevemente por qué elegiste esos niveles específicos (ej. 'protección por encima del Weak High').
-
-Responde en español, tono profesional, máximo 3 frases.`;
-
-        // 4. Llamada a Groq
+        // 1. LLAMADA A LA IA CON TU PROMPT EVOLUCIONADO
         const completion = await groq.chat.completions.create({
-            messages: [{ role: "user", content: promptIA }],
+            messages: [{ role: "user", content: promptIA }], // Aquí va el prompt que revisamos arriba
             model: "llama-3.3-70b-versatile",
         });
 
-        const analisisIA = cleanHTML(completion.choices[0]?.message?.content || "Análisis no disponible.");
+        const analisisIA = cleanHTML(completion.choices[0]?.message?.content || "");
 
-        // 5. Construcción del Mensaje para Telegram
-        const titulo = isSMC ? "⚠️ CAMBIO DE ESTRUCTURA DETECTADO" : "🚀 ORDEN DE LA ÉLITE v7.0";
+        // 2. EXTRACCIÓN DE NIVELES (Para el cálculo de lotaje)
 
-        const mensajeFinal = `<b>${titulo}</b>\n\n` +
-                             `<b>Activo:</b> ${asset}\n` +
-                             `<b>Acción:</b> ${action} ${emojiAccion}\n` +
-                             `<b>Precio Entrada:</b> ${price}\n` +
-                             `<b>Temporalidad:</b> ${tf}\n` +
-                             `<b>Objetivo Liquidez:</b> ${liquidez}\n\n` +
-                             `🛡️ <b>ESTRATEGIA CUÁNTICA IA</b>\n` +
-                             `<i>${analisisIA}</i>`;
+        // Responde de forma concisa. Primero entrega los niveles numéricos y luego la justificación técnica en menos de 30 palabras
+        
+        // Buscamos números en el texto de la IA para calcular el riesgo
+        
+        const numerosEncontrados = analisisIA.match(/\d+\.\d+/g) || [];
+        const slIA = numerosEncontrados[0] || null; // Asumimos que el primer número es el SL
+        
+        // Calculamos lotaje con tus $25 de riesgo
+        const lotajeSugerido = slIA ? calcularLotaje(asset, price, slIA) : "Pendiente";
 
-        // 6. Envío
+        // 3. CONSTRUCCIÓN VISUAL ELITE (Tu diseño deseado)
+        const mensajeFinal = 
+`🚨 <b>ORDEN DE LA ÉLITE</b> 🚨
+
+📊 <b>ACTIVO:</b> ${asset} (${tf})
+⚡ <b>ACCIÓN:</b> ${action}
+💵 <b>PRECIO ENTRADA:</b> ${price}
+
+🛡️ <b>NIVELES SUGERIDOS</b>
+🛑 <b>STOP LOSS:</b> ${slIA || 'Ver análisis'}
+🎯 <b>TAKE PROFIT:</b> ${numerosEncontrados[1] || '1:3'}
+💰 <b>LOTAJE ($25 RISK):</b> <code>${lotajeSugerido}</code>
+
+🤖 <b>IA ANALYZER:</b>
+<i>${analisisIA}</i>
+
+💎 <i>Camino a la libertad financiera</i>`;
+
         await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
             chat_id: ID,
             text: mensajeFinal,
             parse_mode: "HTML"
         });
 
-        res.status(200).send('Señal procesada con éxito');
-
-    } catch (error) {
-        console.error("Error en el Webhook:", error.message);
-        res.status(500).send('Error interno');
+        res.status(200).send('OK');
+    } catch (e) {
+        res.status(500).send('Error');
     }
 });
-
-app.get('/webhook', (req, res) => res.send('Servidor IA de Élite v7.0 Operativo'));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Puerto ${PORT} activo`));
