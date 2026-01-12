@@ -14,15 +14,14 @@ const cleanHTML = (str) => str.replace(/[&<>]/g, tag => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;'
 }[tag] || tag));
 
-// 1. MOTOR DE GESTIÓN DE RIESGO OPTIMIZADO
+// 1. MOTOR DE GESTIÓN DE RIESGO
 const calcularLotaje = (asset, entry, sl) => {
     try {
-        const risk = 25; // Tu riesgo por operación
+        const risk = 25; 
         const entryNum = parseFloat(entry);
         const slNum = parseFloat(sl);
-        
-        // Evitamos división por cero o cálculos erróneos si la IA da números invertidos
         const diff = Math.abs(entryNum - slNum);
+        
         if (!diff || diff === 0) return "Check SL";
 
         let lotaje = 0;
@@ -31,23 +30,21 @@ const calcularLotaje = (asset, entry, sl) => {
         if (symbol.includes("XAU") || symbol.includes("GOLD")) {
             lotaje = risk / (diff * 100);
         } else if (symbol.includes("US30") || symbol.includes("WS30") || symbol.includes("DJI")) {
-            // En US30, usualmente 1 lote = $1 por punto. Ajustamos a minilotes.
             lotaje = risk / diff;
         } else {
-            // Forex estándar (EURUSD, etc)
+            // Forex estándar
             const pips = diff / 0.0001;
             lotaje = risk / (pips * 10);
         }
 
-        // Limitamos a 2 decimales y nos aseguramos que no sea 0.00
         const finalLot = lotaje.toFixed(2);
-        return finalLot > 0 ? finalLot : "0.01 (Min)";
+        return parseFloat(finalLot) > 0 ? finalLot : "0.01";
     } catch (e) {
         return "N/A";
     }
 };
 
-// 2. WEBHOOK CON PROMPT DE ALTA PRECISIÓN
+// 2. WEBHOOK PRINCIPAL
 app.post('/webhook', async (req, res) => {
     try {
         const payload = req.body;
@@ -56,14 +53,13 @@ app.post('/webhook', async (req, res) => {
         const price = payload.price || "0";
         const tf = payload.tf || "15m";
 
-        // PROMPT EVOLUCIONADO: Prohibimos términos relativos (puntos/pips)
         const promptIA = `Actúa como Senior Quant Trader de Wall Street. 
         Analiza: ${action} en ${asset} a precio ${price} (${tf}).
         
         TAREA TÉCNICA:
-        1. Define STOP LOSS como PRECIO EXACTO (Ej: si entry es 44500, SL debe ser algo como 44450.2). NUNCA uses '30 puntos' o '20 pips'.
+        1. Define STOP LOSS como PRECIO EXACTO (Ej: 44450.2). NUNCA uses puntos o pips.
         2. Define TAKE PROFIT como PRECIO EXACTO siguiendo un R:R de 1:3.
-        3. Justifica brevemente la zona de liquidez (Order Block o FVG).
+        3. Justifica brevemente la zona de liquidez.
         
         Responde: Niveles numéricos primero y luego análisis en 2 frases.`;
 
@@ -72,27 +68,33 @@ app.post('/webhook', async (req, res) => {
             model: "llama-3.3-70b-versatile",
         });
 
+        // CORRECCIÓN DE VARIABLES: Usamos 'analisisRaw' en todo el bloque
         const analisisRaw = completion.choices[0]?.message?.content || "";
-        const analisisIA = cleanHTML(analisRaw);
+        const analisisIA = cleanHTML(analisisRaw);
 
-        // BUSCADOR DE NÚMEROS (Precios reales)
-        // Filtramos números que se parezcan al precio de entrada para no capturar el "1:3"
-        const numeros = analisRaw.match(/\d+(\.\d+)?/g) || [];
-        const preciosSugeridos = numeros.filter(n => Math.abs(parseFloat(n) - parseFloat(price)) < (parseFloat(price) * 0.1));
+        // BUSCADOR DE NÚMEROS MEJORADO
+        const numeros = analisisRaw.match(/\d+(\.\d+)?/g) || [];
+        
+        // Filtramos para obtener precios que tengan sentido según el activo
+        const preciosSugeridos = numeros.filter(n => {
+            const val = parseFloat(n);
+            const p = parseFloat(price);
+            return val > (p * 0.5) && val < (p * 1.5); // Filtro de cercanía al precio
+        });
         
         const slIA = preciosSugeridos[0] || null;
-        const tpIA = preciosSugeridos[1] || "1:3 Target";
-        const lotajeSugerido = slIA ? calcularLotaje(asset, price, slIA) : "Calculando...";
+        const tpIA = preciosSugeridos[1] || "Target 1:3";
+        const lotajeSugerido = slIA ? calcularLotaje(asset, price, slIA) : "Pendiente";
 
-        // 3. DISEÑO VISUAL ÉLITE V9.0 (Compacto y Profesional)
+        // 3. DISEÑO VISUAL ÉLITE (Compacto)
         const mensajeFinal = 
-`🚨 <b>ORDEN DE LA ÉLITE v9.0</b> 🚨
+`🚨 <b>ORDEN DE LA ÉLITE v9.2</b> 🚨
 
 📊 <b>ACTIVO:</b> <code>${asset}</code> | <b>TF:</b> ${tf}
 ⚡ <b>ACCIÓN:</b> <b>${action}</b>
 💵 <b>ENTRADA:</b> <code>${price}</code>
 
-🛡️ <b>GESTIÓN DE RIESGO ($25)</b>
+🛡️ <b>GESTIÓN ($25 RISK)</b>
 🛑 <b>STOP LOSS:</b> <code>${slIA || 'Manual'}</code>
 🎯 <b>TAKE PROFIT:</b> <code>${tpIA}</code>
 💰 <b>LOTAJE:</b> ⚠️ <b>${lotajeSugerido}</b> ⚠️
@@ -108,14 +110,14 @@ app.post('/webhook', async (req, res) => {
             parse_mode: "HTML"
         });
 
-        res.status(200).send('Señal enviada');
+        res.status(200).send('OK');
     } catch (e) {
         console.error("Error en Webhook:", e.message);
         res.status(500).send('Error');
     }
 });
 
-app.get('/', (req, res) => res.send('Oráculo de Sión v9.0 Online'));
+app.get('/', (req, res) => res.send('Oráculo Online v9.2 - Corregido'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Puerto ${PORT} activo y listo para el Fondeo`));
+app.listen(PORT, () => console.log(`🚀 Puerto ${PORT} activo`));
