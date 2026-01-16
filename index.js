@@ -14,7 +14,7 @@ const cleanHTML = (str) => str.replace(/[&<>]/g, tag => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;'
 }[tag] || tag));
 
-// 1. MOTOR DE GESTIÓN DE RIESGO
+// 1. MOTOR DE GESTIÓN DE RIESGO (Ajustado para Scalping)
 const calcularLotaje = (asset, entry, sl) => {
     try {
         const risk = 25; 
@@ -32,7 +32,6 @@ const calcularLotaje = (asset, entry, sl) => {
         } else if (symbol.includes("US30") || symbol.includes("WS30") || symbol.includes("DJI")) {
             lotaje = risk / diff;
         } else {
-            // Forex estándar
             const pips = diff / 0.0001;
             lotaje = risk / (pips * 10);
         }
@@ -44,7 +43,7 @@ const calcularLotaje = (asset, entry, sl) => {
     }
 };
 
-// 2. WEBHOOK PRINCIPAL
+// 2. WEBHOOK CON LÓGICA DE SCALPING
 app.post('/webhook', async (req, res) => {
     try {
         const payload = req.body;
@@ -53,56 +52,53 @@ app.post('/webhook', async (req, res) => {
         const price = payload.price || "0";
         const tf = payload.tf || "15m";
 
-        const promptIA = `Actúa como Senior Quant Trader de Wall Street. 
+        // CAMBIO CRÍTICO: Prompt enfocado en Scalping y precisión quirúrgica
+        const promptIA = `Actúa como Senior Scalper Trader. 
         Analiza: ${action} en ${asset} a precio ${price} (${tf}).
         
-        TAREA TÉCNICA:
-        1. Define STOP LOSS como PRECIO EXACTO (Ej: 44450.2). NUNCA uses puntos o pips.
-        2. Define TAKE PROFIT como PRECIO EXACTO siguiendo un R:R de 1:3.
-        3. Justifica brevemente la zona de liquidez.
+        INSTRUCCIONES DE PRECISIÓN:
+        1. Define STOP LOSS AJUSTADO: Usa la mecha (wick) más cercana del CHoCH. Buscamos SCALPING, no swing.
+        2. Define TAKE PROFIT con R:R 1:3 basado en liquidez inmediata.
+        3. Entrega solo PRECIOS EXACTOS.
         
-        Responde: Niveles numéricos primero y luego análisis en 2 frases.`;
+        Responde: Niveles primero y luego análisis de 2 frases sobre la trampa de liquidez detectada.`;
 
         const completion = await groq.chat.completions.create({
             messages: [{ role: "user", content: promptIA }],
             model: "llama-3.3-70b-versatile",
         });
 
-        // CORRECCIÓN DE VARIABLES: Usamos 'analisisRaw' en todo el bloque
         const analisisRaw = completion.choices[0]?.message?.content || "";
         const analisisIA = cleanHTML(analisisRaw);
 
-        // BUSCADOR DE NÚMEROS MEJORADO
         const numeros = analisisRaw.match(/\d+(\.\d+)?/g) || [];
-        
-        // Filtramos para obtener precios que tengan sentido según el activo
         const preciosSugeridos = numeros.filter(n => {
             const val = parseFloat(n);
             const p = parseFloat(price);
-            return val > (p * 0.5) && val < (p * 1.5); // Filtro de cercanía al precio
+            return val > (p * 0.8) && val < (p * 1.2); 
         });
         
         const slIA = preciosSugeridos[0] || null;
         const tpIA = preciosSugeridos[1] || "Target 1:3";
         const lotajeSugerido = slIA ? calcularLotaje(asset, price, slIA) : "Pendiente";
 
-        // 3. DISEÑO VISUAL ÉLITE (Compacto)
+        // 3. DISEÑO VISUAL ÉLITE v9.6
         const mensajeFinal = 
-`🚨 <b>ORDEN DE LA ÉLITE v9.2</b> 🚨
+`⚡ <b>SCALPER ELITE v9.6</b> ⚡
 
 📊 <b>ACTIVO:</b> <code>${asset}</code> | <b>TF:</b> ${tf}
-⚡ <b>ACCIÓN:</b> <b>${action}</b>
+🎯 <b>ACCIÓN:</b> <b>${action}</b>
 💵 <b>ENTRADA:</b> <code>${price}</code>
 
-🛡️ <b>GESTIÓN ($25 RISK)</b>
+🛡️ <b>GESTIÓN DE RIESGO ($25)</b>
 🛑 <b>STOP LOSS:</b> <code>${slIA || 'Manual'}</code>
 🎯 <b>TAKE PROFIT:</b> <code>${tpIA}</code>
 💰 <b>LOTAJE:</b> ⚠️ <b>${lotajeSugerido}</b> ⚠️
 
-🤖 <b>IA ANALYZER:</b>
+🤖 <b>ANALYSIS:</b>
 <i>${analisisIA}</i>
 
-💎 <i>Operativa Institucional - Caracas, VZLA</i>`;
+💎 <i>Scalping Institucional - Caracas, VZLA</i>`;
 
         await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
             chat_id: ID,
@@ -117,7 +113,7 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-app.get('/', (req, res) => res.send('Oráculo Online v9.2 - Corregido'));
+app.get('/', (req, res) => res.send('Oráculo Scalper v9.6 Online'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Puerto ${PORT} activo`));
+app.listen(PORT, () => console.log(`🚀 Scalper Mode Activo en puerto ${PORT}`));
