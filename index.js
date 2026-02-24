@@ -55,34 +55,30 @@ app.get('/', (req, res) => {
 });
 
 // WEBHOOK PRINCIPAL
+// ... (Mantén las funciones anteriores de lotaje e inicio de servidor)
+
 app.post('/webhook', async (req, res) => {
     try {
         const { asset, action, price } = req.body;
-        
-        // Validación de datos de entrada
-        if (!asset || !action || !price) {
-            return res.status(400).send('Faltan datos en el Webhook');
-        }
-
         const nowNY = moment().tz("America/New_York");
         const hora = nowNY.hour();
         const minutos = nowNY.minute();
         const tiempoDecimal = hora + (minutos / 60);
 
-        // --- FILTRO HORARIO: 4:00 AM a 4:00 PM NY ---
         if (tiempoDecimal < 4.0 || tiempoDecimal > 16.0) {
-            console.log(`zzz El Arquitecto descansa. Hora NY: ${nowNY.format('HH:mm')}.`);
             return res.status(200).send('Fuera_de_Horario_Poder');
         }
 
         const pCurrent = parseFloat(price);
-        const direccion = action.toUpperCase().includes("BUY") ? "COMPRA" : "VENTA";
+        const direccion = action.toUpperCase().includes("BUY") ? "BUY (COMPRA) 🟢" : "SELL (VENTA) 🔴";
         
+        // --- PROMPT REFORZADO PARA ANÁLISIS TÉCNICO ---
         const promptIA = `
-        Analiza el token/activo ${asset} al precio ${pCurrent}. Dirección: ${direccion}.
-        Verifica: 1. Movimiento de dinero/liquidez. 2. Riesgo de estafa (HoneyPot/Creador). 3. Presencia de ballenas.
-        Estructura de H4/H1 para SL en 15m. Ratio 1:3.
-        Respuesta JSON: {"sl": "precio_numerico", "reason": "Luz verde dispara, es el momento, aquí la elite está concentrando energía, próximamente se verán los movimientos"}
+        Analiza detalladamente ${asset} al precio ${pCurrent}. Acción: ${direccion}.
+        Verifica estructura de mercado en H4 y H1 (tendencia, soportes/resistencias rotos).
+        Confirma la entrada en 15m. 
+        Calcula un Stop Loss (sl) coherente con la estructura técnica para un ratio 1:3.
+        Respuesta JSON: {"sl": "precio_numerico", "reason": "Estructura de tendencia [alcista/bajista] en H4 y H1, con [niveles] rotos y confirmación de [compra/venta] en 15m, permitiendo un SL en [precio] para proteger con ratio 1:3"}
         `;
 
         const completion = await groq.chat.completions.create({
@@ -93,11 +89,11 @@ app.post('/webhook', async (req, res) => {
         });
 
         const iaResponse = JSON.parse(completion.choices[0]?.message?.content || "{}");
-        let slIA = parseFloat(iaResponse.sl) || (direccion === "COMPRA" ? pCurrent * 0.99 : pCurrent * 1.01);
+        let slIA = parseFloat(iaResponse.sl);
         let razonIA = iaResponse.reason;
 
         let distancia = Math.abs(pCurrent - slIA);
-        let tpCalculado = direccion === "COMPRA" ? pCurrent + (distancia * 3) : pCurrent - (distancia * 3);
+        let tpCalculado = action.toUpperCase().includes("BUY") ? pCurrent + (distancia * 3) : pCurrent - (distancia * 3);
         const beFinal = ((pCurrent + tpCalculado) / 2);
 
         const decimales = (asset.includes("JPY") || asset.includes("US30") || asset.includes("NAS") || asset.includes("XAU")) ? 2 : 5;
@@ -107,6 +103,7 @@ app.post('/webhook', async (req, res) => {
 `🦅 <b>EL DESPERTAR DEL ARQUITECTO</b>
 
 ⚡ <b>ACTIVO:</b> <code>${asset}</code>
+🧭 <b>ORDEN:</b> <b>${direccion}</b>
 📍 <b>ENTRADA:</b> <code>${price}</code>
 ⏳ <b>SESIÓN:</b> LONDRES/NY (Activa)
 
@@ -117,6 +114,8 @@ app.post('/webhook', async (req, res) => {
 💎 <b>LOTAJE:</b> <code>${lotajeFinal}</code>
 
 👁️ <b>GUÍA:</b> "${razonIA}"
+
+<b>luz verde dispara, es el momento, aquí la elite está concentrando energía, próximamente se verán los movimientos.</b>
 
 <b>así es y así será gracias, gracias, gracias.</b>`;
 
