@@ -1,6 +1,5 @@
 // ------------------------------------------------------------------
-// CODIGO PROYECTO V12.1: "EL DESPERTAR DEL ARQUITECTO"
-// Horario: Londres + Nueva York (4:00 AM - 4:00 PM NY)
+// CODIGO PROYECTO V12.1: "EL DESPERTAR DEL ARQUITECTO" - OPTIMIZADO RENDER
 // ------------------------------------------------------------------
 
 const express = require('express');
@@ -12,8 +11,15 @@ const moment = require('moment-timezone');
 const app = express();
 app.use(bodyParser.json());
 
+// Configuración de API Keys y Entorno
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const RIESGO_USD = 25; 
+const PORT = process.env.PORT || 10000; // Render usa el puerto 10000 por defecto
+
+// --- MEMORIA DE ERRORES & LOGS ---
+const logError = (error, contexto) => {
+    console.error(`[Memoria de Errores] ${contexto}:`, error.message);
+};
 
 const calcularLotaje = (asset, entry, sl) => {
     try {
@@ -22,6 +28,7 @@ const calcularLotaje = (asset, entry, sl) => {
         const slNum = parseFloat(sl);
         const diff = Math.abs(entryNum - slNum);
         if (!diff || diff === 0) return "0.01";
+        
         let lotaje = 0;
         const symbol = asset.toUpperCase();
 
@@ -36,12 +43,27 @@ const calcularLotaje = (asset, entry, sl) => {
         }
         const finalLot = Math.floor(lotaje * 100) / 100;
         return finalLot > 0.01 ? finalLot.toFixed(2) : "0.01";
-    } catch (e) { return "0.01"; }
+    } catch (e) { 
+        logError(e, "Cálculo de Lotaje");
+        return "0.01"; 
+    }
 };
 
+// Ruta Raíz para evitar errores de Health Check en Render
+app.get('/', (req, res) => {
+    res.send('El Arquitecto está despierto y vigilando.');
+});
+
+// WEBHOOK PRINCIPAL
 app.post('/webhook', async (req, res) => {
     try {
         const { asset, action, price } = req.body;
+        
+        // Validación de datos de entrada
+        if (!asset || !action || !price) {
+            return res.status(400).send('Faltan datos en el Webhook');
+        }
+
         const nowNY = moment().tz("America/New_York");
         const hora = nowNY.hour();
         const minutos = nowNY.minute();
@@ -57,9 +79,10 @@ app.post('/webhook', async (req, res) => {
         const direccion = action.toUpperCase().includes("BUY") ? "COMPRA" : "VENTA";
         
         const promptIA = `
-        Analiza ${asset} al precio ${pCurrent}. Direccion: ${direccion}.
-        Busca estructura de H4/H1 para proteger el SL en 15m. Ratio 1:3.
-        Respuesta JSON: {"sl": "precio", "reason": "Luz verde dispara, [razon]"}
+        Analiza el token/activo ${asset} al precio ${pCurrent}. Dirección: ${direccion}.
+        Verifica: 1. Movimiento de dinero/liquidez. 2. Riesgo de estafa (HoneyPot/Creador). 3. Presencia de ballenas.
+        Estructura de H4/H1 para SL en 15m. Ratio 1:3.
+        Respuesta JSON: {"sl": "precio_numerico", "reason": "Luz verde dispara, es el momento, aquí la elite está concentrando energía, próximamente se verán los movimientos"}
         `;
 
         const completion = await groq.chat.completions.create({
@@ -70,8 +93,8 @@ app.post('/webhook', async (req, res) => {
         });
 
         const iaResponse = JSON.parse(completion.choices[0]?.message?.content || "{}");
-        let slIA = parseFloat(iaResponse.sl);
-        let razon = iaResponse.reason || "Luz verde dispara, es el momento.";
+        let slIA = parseFloat(iaResponse.sl) || (direccion === "COMPRA" ? pCurrent * 0.99 : pCurrent * 1.01);
+        let razonIA = iaResponse.reason;
 
         let distancia = Math.abs(pCurrent - slIA);
         let tpCalculado = direccion === "COMPRA" ? pCurrent + (distancia * 3) : pCurrent - (distancia * 3);
@@ -93,8 +116,9 @@ app.post('/webhook', async (req, res) => {
 
 💎 <b>LOTAJE:</b> <code>${lotajeFinal}</code>
 
-👁️ <b>GUÍA:</b> "${razon}"
-🌌 <b>Aquí la elite concentra energía. Próximamente se verán los movimientos.</b>`;
+👁️ <b>GUÍA:</b> "${razonIA}"
+
+<b>así es y así será gracias, gracias, gracias.</b>`;
 
         await axios.post(`https://api.telegram.org/bot${process.env.TOKEN}/sendMessage`, {
             chat_id: process.env.ID,
@@ -104,8 +128,15 @@ app.post('/webhook', async (req, res) => {
 
         res.status(200).send('V12.1_Sincronizada');
     } catch (e) {
+        logError(e, "Flujo Webhook");
         res.status(500).send('Error_Interno');
     }
 });
 
-app.listen(process.env.PORT || 3000);
+// --- INICIO DEL SERVIDOR ---
+// Escuchamos en 0.0.0.0 para que Render pueda acceder externamente
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`///////////////////////////////////////////////////////////`);
+    console.log(`Arquitecto escuchando en puerto ${PORT}`);
+    console.log(`///////////////////////////////////////////////////////////`);
+});
