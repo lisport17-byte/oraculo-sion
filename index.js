@@ -1,141 +1,149 @@
-// ------------------------------------------------------------------
-// CODIGO PROYECTO V12.1: "EL DESPERTAR DEL ARQUITECTO" - OPTIMIZADO RENDER
-// ------------------------------------------------------------------
-
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const Groq = require('groq-sdk');
-const moment = require('moment-timezone');
 
 const app = express();
 app.use(bodyParser.json());
 
-// Configuración de API Keys y Entorno
+// --- CONFIGURACIÓN DE LA MATRIX ---
+const TOKEN = process.env.TOKEN;
+const ID = process.env.ID;
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const RIESGO_USD = 25; 
-const PORT = process.env.PORT || 10000; // Render usa el puerto 10000 por defecto
+const RIESGO_USD = 25; // Tu semilla de abundancia
 
-// --- MEMORIA DE ERRORES & LOGS ---
-const logError = (error, contexto) => {
-    console.error(`[Memoria de Errores] ${contexto}:`, error.message);
-};
+// --- LIMPIEZA DE RUIDO ---
+const cleanHTML = (str) => str.replace(/[&<>]/g, tag => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;'
+}[tag] || tag));
 
+// --- MOTOR DE CÁLCULO CUÁNTICO (LOTAJE) ---
 const calcularLotaje = (asset, entry, sl) => {
     try {
         const risk = RIESGO_USD; 
         const entryNum = parseFloat(entry);
         const slNum = parseFloat(sl);
         const diff = Math.abs(entryNum - slNum);
-        if (!diff || diff === 0) return "0.01";
         
+        // Si la diferencia es cero o error, protegemos capital
+        if (!diff || diff === 0 || isNaN(diff)) return "0.01 (Protección)";
+
         let lotaje = 0;
         const symbol = asset.toUpperCase();
 
+        // Lógica para Indices, Oros y Forex
         if (symbol.includes("XAU") || symbol.includes("GOLD")) {
-            lotaje = risk / (diff * 100); 
-        } else if (symbol.includes("US30") || symbol.includes("NAS") || symbol.includes("NDX")) {
-            lotaje = (risk / diff) * 0.9; 
+            lotaje = risk / (diff * 100); // Oro
+        } else if (symbol.includes("US30") || symbol.includes("WS30") || symbol.includes("NAS") || symbol.includes("DJI")) {
+            lotaje = risk / diff; // Índices
         } else if (symbol.includes("JPY")) {
-            lotaje = risk / (diff * 1000); 
-        } else { 
-            lotaje = risk / (diff * 100000); 
+            lotaje = risk / (diff * 1000); // Pares con Yen
+        } else {
+            lotaje = risk / (diff * 100000); // Forex Estándar
         }
+
+        // Redondeo preciso para brokers estándar
         const finalLot = Math.floor(lotaje * 100) / 100;
-        return finalLot > 0.01 ? finalLot.toFixed(2) : "0.01";
-    } catch (e) { 
-        logError(e, "Cálculo de Lotaje");
-        return "0.01"; 
-    }
+        return finalLot > 0 ? finalLot.toFixed(2) : "0.01";
+    } catch (e) { return "0.01"; }
 };
 
-// Ruta Raíz para evitar errores de Health Check en Render
-app.get('/', (req, res) => {
-    res.send('El Arquitecto está despierto y vigilando.');
-});
-
-// WEBHOOK PRINCIPAL
-// ... (Mantén las funciones anteriores de lotaje e inicio de servidor)
-
+// --- WEBHOOK SINTÉRGICO (El Cerebro) ---
 app.post('/webhook', async (req, res) => {
     try {
-        const { asset, action, price } = req.body;
-        const nowNY = moment().tz("America/New_York");
-        const hora = nowNY.hour();
-        const minutos = nowNY.minute();
-        const tiempoDecimal = hora + (minutos / 60);
-
-        if (tiempoDecimal < 4.0 || tiempoDecimal > 16.0) {
-            return res.status(200).send('Fuera_de_Horario_Poder');
-        }
-
+        // 1. Decodificar la Señal de la Latice
+        const { asset, action, price, tf, strategy } = req.body;
         const pCurrent = parseFloat(price);
-        const direccion = action.toUpperCase().includes("BUY") ? "BUY (COMPRA) 🟢" : "SELL (VENTA) 🔴";
         
-        // --- PROMPT REFORZADO PARA ANÁLISIS TÉCNICO ---
-        const promptIA = `
-        Analiza detalladamente ${asset} al precio ${pCurrent}. Acción: ${direccion}.
-        Verifica estructura de mercado en H4 y H1 (tendencia, soportes/resistencias rotos).
-        Confirma la entrada en 15m. 
-        Calcula un Stop Loss (sl) coherente con la estructura técnica para un ratio 1:3.
-        Respuesta JSON: {"sl": "precio_numerico", "reason": "Estructura de tendencia [alcista/bajista] en H4 y H1, con [niveles] rotos y confirmación de [compra/venta] en 15m, permitiendo un SL en [precio] para proteger con ratio 1:3"}
+        // Normalizamos la acción (Todo a mayúsculas para evitar dudas)
+        const direccion = action.toUpperCase().includes("BUY") ? "COMPRA" : "VENTA";
+        
+        console.log(`🌀 Señal Recibida: ${asset} | ${direccion} | ${price}`);
+
+        // 2. Consulta al Oráculo (IA) solo para Estructura (SL)
+        const promptIA = `Eres un Trader Institucional de Elite.
+        ACTIVO: ${asset}. PRECIO ACTUAL: ${pCurrent}. TENDENCIA: ${direccion}.
+        
+        TU ÚNICA MISIÓN:
+        Analiza la estructura técnica inmediata y dame SOLO el precio del STOP LOSS (SL).
+        - Si es COMPRA, el SL debe estar debajo del último mínimo relevante (Soporte).
+        - Si es VENTA, el SL debe estar encima del último máximo relevante (Resistencia).
+        - El SL debe ser lógico, no muy lejos (Scalping/Intraday).
+        
+        RESPUESTA JSON OBLIGATORIA:
+        {"sl": "precio_numerico", "reason": "motivo_breve_en_3_palabras"}
         `;
 
         const completion = await groq.chat.completions.create({
             messages: [{ role: "user", content: promptIA }],
             model: "llama-3.3-70b-versatile",
-            temperature: 0.1,
+            temperature: 0.1, // Frialdad máxima para precisión
             response_format: { type: "json_object" }
         });
 
+        // 3. Procesamiento Matemático (La Ley del 1:3)
         const iaResponse = JSON.parse(completion.choices[0]?.message?.content || "{}");
         let slIA = parseFloat(iaResponse.sl);
-        let razonIA = iaResponse.reason;
+        const razon = iaResponse.reason || "Estructura de Mercado";
 
-        let distancia = Math.abs(pCurrent - slIA);
-        let tpCalculado = action.toUpperCase().includes("BUY") ? pCurrent + (distancia * 3) : pCurrent - (distancia * 3);
-        const beFinal = ((pCurrent + tpCalculado) / 2);
+        // VERIFICACIÓN DE SEGURIDAD (Anti-Alucinación)
+        // Si la IA da un SL incoherente (ej: SL arriba en una compra), lo corregimos forzosamente.
+        let distancia = 0;
+        let tpCalculado = 0;
 
-        const decimales = (asset.includes("JPY") || asset.includes("US30") || asset.includes("NAS") || asset.includes("XAU")) ? 2 : 5;
-        const lotajeFinal = calcularLotaje(asset, price, slIA.toFixed(decimales));
+        if (direccion === "COMPRA") {
+            if (slIA >= pCurrent) slIA = pCurrent * 0.995; // Corrección de emergencia (0.5%)
+            distancia = pCurrent - slIA;
+            tpCalculado = pCurrent + (distancia * 3); // RATIO 1:3 MATEMÁTICO
+        } else { // VENTA
+            if (slIA <= pCurrent) slIA = pCurrent * 1.005; // Corrección de emergencia (0.5%)
+            distancia = slIA - pCurrent;
+            tpCalculado = pCurrent - (distancia * 3); // RATIO 1:3 MATEMÁTICO
+        }
 
+        // Formato de precios (2 decimales para índices/Yen, 5 para Forex)
+        const decimales = (asset.includes("JPY") || asset.includes("US30") || asset.includes("XAU")) ? 2 : 5;
+
+        const slFinal = slIA.toFixed(decimales);
+        const tpFinal = tpCalculado.toFixed(decimales);
+        const lotajeFinal = calcularLotaje(asset, price, slFinal);
+
+        // 4. Construcción del Mensaje Sagrado
+        const emoji = direccion === "COMPRA" ? "🟢 🚀 COMPRA INSTITUCIONAL" : "🔴 🔻 VENTA INSTITUCIONAL";
+        
         const mensajeFinal = 
-`🦅 <b>EL DESPERTAR DEL ARQUITECTO</b>
+`${emoji}
 
 ⚡ <b>ACTIVO:</b> <code>${asset}</code>
-🧭 <b>ORDEN:</b> <b>${direccion}</b>
-📍 <b>ENTRADA:</b> <code>${price}</code>
-⏳ <b>SESIÓN:</b> LONDRES/NY (Activa)
+precio: <code>${price}</code>
 
-🛑 <b>SL:</b> <code>${slIA.toFixed(decimales)}</code>
-💰 <b>TP:</b> <code>${tpCalculado.toFixed(decimales)}</code>
-🛡️ <b>BE:</b> <code>${beFinal.toFixed(decimales)}</code>
+🎯 <b>PROYECCIÓN 1:3 (SINTÉRGICA)</b>
+🛑 <b>SL (Estructura):</b> <code>${slFinal}</code>
+💰 <b>TP (Ratio 1:3):</b> <code>${tpFinal}</code>
 
+⚖️ <b>GESTIÓN ($25 Riesgo)</b>
 💎 <b>LOTAJE:</b> <code>${lotajeFinal}</code>
 
-👁️ <b>GUÍA:</b> "${razonIA}"
+🧠 <b>ANÁLISIS IA:</b>
+<i>"${razon}"</i>
 
-<b>luz verde dispara, es el momento, aquí la elite está concentrando energía, próximamente se verán los movimientos.</b>
+🌌 <b>Así es y así será gracias, gracias, gracias.</b>`;
 
-<b>así es y así será gracias, gracias, gracias.</b>`;
-
-        await axios.post(`https://api.telegram.org/bot${process.env.TOKEN}/sendMessage`, {
-            chat_id: process.env.ID,
+        // 5. Envío a Telegram
+        await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+            chat_id: ID,
             text: mensajeFinal,
             parse_mode: "HTML"
         });
 
-        res.status(200).send('V12.1_Sincronizada');
+        res.status(200).send('Sincronia_OK');
     } catch (e) {
-        logError(e, "Flujo Webhook");
-        res.status(500).send('Error_Interno');
+        console.error("Error en la Matrix:", e);
+        res.status(500).send('Error_Sintergico');
     }
 });
 
-// --- INICIO DEL SERVIDOR ---
-// Escuchamos en 0.0.0.0 para que Render pueda acceder externamente
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`///////////////////////////////////////////////////////////`);
-    console.log(`Arquitecto escuchando en puerto ${PORT}`);
-    console.log(`///////////////////////////////////////////////////////////`);
-});
+app.get('/', (req, res) => res.send('Oráculo v9.9 Elite - Ratio 1:3 Activo'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Servidor Conectado en Puerto ${PORT}`));
