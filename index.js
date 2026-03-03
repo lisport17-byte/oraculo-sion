@@ -124,7 +124,7 @@ app.post('/webhook', async (req, res) => {
         }
 
         // 2. VALIDAR CAMPOS ESENCIALES
-        if (!asset  !action  !price || !sl) {
+        if (!asset || !action || !price || !sl) {
             return res.status(400).send('Payload incompleto');
         }
 
