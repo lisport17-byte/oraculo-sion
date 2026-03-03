@@ -6,144 +6,202 @@ const Groq = require('groq-sdk');
 const app = express();
 app.use(bodyParser.json());
 
-// --- CONFIGURACIÓN DE LA MATRIX ---
-const TOKEN = process.env.TOKEN;
-const ID = process.env.ID;
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const RIESGO_USD = 25; // Semilla sagrada inamovible
+// ══════════════════════════════════════════════
+//   CONFIGURACIÓN
+// ══════════════════════════════════════════════
+const TOKEN          = process.env.TOKEN;
+const CHAT_ID        = process.env.ID;
+const GROQ_KEY       = process.env.GROQ_API_KEY;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const RIESGO_USD     = 25;
 
-// --- MOTOR DE CÁLCULO DE LOTAJE (PROTECCIÓN CAPITAL) ---
-const calcularLotaje = (asset, entry, sl) => {
-    try {
-        const risk = RIESGO_USD; 
-        const entryNum = parseFloat(entry);
-        const slNum = parseFloat(sl);
-        const diff = Math.abs(entryNum - slNum);
-        
-        if (!diff || diff === 0 || isNaN(diff)) return "0.01 (Wait)";
+const groq = new Groq({ apiKey: GROQ_KEY });
 
-        let lotaje = 0;
-        const symbol = asset.toUpperCase();
-
-        // Ajuste fino para la volatilidad explosiva de NAS100 y GOLD
-        if (symbol.includes("XAU") || symbol.includes("GOLD")) {
-            lotaje = risk / (diff * 100); 
-        } else if (symbol.includes("US30") || symbol.includes("NAS") || symbol.includes("NDX")) {
-            lotaje = risk / diff; 
-            // Reducir lotaje un 10% extra por seguridad en índices explosivos
-            lotaje = lotaje * 0.9; 
-        } else if (symbol.includes("JPY")) {
-            lotaje = risk / (diff * 1000); 
-        } else {
-            lotaje = risk / (diff * 100000); 
-        }
-
-        const finalLot = Math.floor(lotaje * 100) / 100;
-        return finalLot > 0.01 ? finalLot.toFixed(2) : "0.01";
-    } catch (e) { return "0.01"; }
+// ══════════════════════════════════════════════
+//   HELPERS DE FORMATO
+// ══════════════════════════════════════════════
+const getDecimals = (asset) => {
+    const sym = asset.toUpperCase();
+    if (sym.includes("JPY"))                           return 3;
+    if (sym.includes("XAU") || sym.includes("GOLD"))   return 2;
+    if (sym.includes("US30") || sym.includes("DJI"))   return 1;
+    if (sym.includes("NAS") || sym.includes("SPX"))    return 1;
+    return 5;
 };
 
-// --- EL CEREBRO ---
-app.post('/webhook', async (req, res) => {
+const fmt = (num, dec) => parseFloat(num).toFixed(dec);
+
+// ══════════════════════════════════════════════
+//   CÁLCULO DE LOTAJE
+// ══════════════════════════════════════════════
+const calcularLotaje = (asset, entry, sl) => {
     try {
-        const { asset, action, price, tf, strategy } = req.body;
-        const pCurrent = parseFloat(price);
-        const direccion = action.toUpperCase().includes("BUY") ? "COMPRA" : "VENTA";
-        
-        console.log(`👁️ Ojo del Oráculo: ${asset} | ${direccion} | ${price}`);
+        const diff = Math.abs(parseFloat(entry) - parseFloat(sl));
+        if (!diff || isNaN(diff)) return "0.01";
 
-        // --- PROMPT DE ALTA JERARQUÍA (SIMULACIÓN FRACTAL) ---
-        const promptIA = `Eres el Trader Principal de un Fondo de Cobertura de Wall Street.
-        Estás analizando ${asset} en precio ${pCurrent}. La señal técnica es ${direccion}.
-        
-        TU MISIÓN CRÍTICA:
-        1. Ignora el ruido de corto plazo. Piensa en la estructura macro.
-        2. Dame un STOP LOSS (SL) técnico preciso.
-           - Si es COMPRA: Debajo del último mínimo estructural claro (Soporte).
-           - Si es VENTA: Encima del último máximo estructural claro (Resistencia).
-        3. El SL debe permitir que el precio respire, NO lo pongas muy pegado porque hay volatilidad.
-        
-        RESPUESTA JSON OBLIGATORIA:
-        {"sl": "precio_numerico", "reason": "motivo_institucional_breve"}
-        `;
+        const sym = asset.toUpperCase();
+        let lotaje = 0;
 
-        const completion = await groq.chat.completions.create({
-            messages: [{ role: "user", content: promptIA }],
-            model: "llama-3.3-70b-versatile",
-            temperature: 0.2, // Baja temperatura para ser frio y calculador
-            response_format: { type: "json_object" }
-        });
-
-        const iaResponse = JSON.parse(completion.choices[0]?.message?.content || "{}");
-        let slIA = parseFloat(iaResponse.sl);
-        const razon = iaResponse.reason || "Estructura Institucional";
-
-        // --- MATEMÁTICA SAGRADA 1:3 & PROTECCIÓN ---
-        let distancia = 0;
-        let tpCalculado = 0;
-
-        // Corrección de seguridad anti-alucinación
-        if (direccion === "COMPRA") {
-            if (slIA >= pCurrent) slIA = pCurrent * 0.995; 
-            distancia = pCurrent - slIA;
-            tpCalculado = pCurrent + (distancia * 3);
-        } else { 
-            if (slIA <= pCurrent) slIA = pCurrent * 1.005; 
-            distancia = slIA - pCurrent;
-            tpCalculado = pCurrent - (distancia * 3);
+        if (sym.includes("XAU") || sym.includes("GOLD")) {
+            lotaje = RIESGO_USD / (diff * 100);
+        } else if (sym.includes("US30") || sym.includes("DJI")) {
+            lotaje = RIESGO_USD / (diff * 1);
+        } else if (sym.includes("NAS")) {
+            lotaje = RIESGO_USD / (diff * 2);
+        } else if (sym.includes("JPY")) {
+            lotaje = RIESGO_USD / (diff * 1000);
+        } else {
+            lotaje = RIESGO_USD / (diff * 100000);
         }
 
-        // Cálculo del Punto de Equilibrio (50% del viaje) para mover a BE
-        const precioBE = ((pCurrent + tpCalculado) / 2);
+        const final = Math.floor(lotaje * 100) / 100;
+        return final > 0 ? final.toFixed(2) : "0.01";
+    } catch {
+        return "0.01";
+    }
+};
 
-        const decimales = (asset.includes("JPY") || asset.includes("US30") || asset.includes("XAU") || asset.includes("NAS")) ? 2 : 5;
-        
-        const slFinal = slIA.toFixed(decimales);
-        const tpFinal = tpCalculado.toFixed(decimales);
-        const beFinal = precioBE.toFixed(decimales);
-        const lotajeFinal = calcularLotaje(asset, price, slFinal);
+// ══════════════════════════════════════════════
+//   ANÁLISIS IA CON CONTEXTO REAL
+// ══════════════════════════════════════════════
+const analizarConIA = async (asset, direccion, price, tf, sl, tp3, rsi, contexto, fuerza) => {
+    const prompt = `Eres un Trader Institucional de Élite. Analiza esta señal con los datos REALES:
 
-        // --- MENSAJE DE PODER (Telegram) ---
-        // Sugerimos LIMIT para evitar entrar tarde por la explosividad
-        const tipoOrden = "LIMIT ORDER (Esperar Retroceso)"; 
-        const emoji = direccion === "COMPRA" ? "🟢 🐂 COMPRA FUERTE" : "🔴 🐻 VENTA FUERTE";
-        
-        const mensajeFinal = 
-`${emoji}
+ACTIVO: ${asset}
+PRECIO DE ENTRADA: ${price}
+DIRECCIÓN: ${direccion}
+TIMEFRAME: ${tf}
+STOP LOSS calculado (estructura): ${sl}
+TAKE PROFIT 1:3: ${tp3}
+RSI actual: ${rsi}
+CONTEXTO DE TENDENCIA: ${contexto}
+FUERZA DE LA SEÑAL: ${fuerza}
 
-⚡ <b>ACTIVO:</b> <code>${asset}</code>
-📍 <b>ZONA ENTRADA:</b> <code>${price}</code>
-⚠️ <b>TIPO:</b> ${tipoOrden}
+Valida si esta señal tiene coherencia técnica y explica POR QUÉ en 2 frases máximo.
+Si la señal es débil o el RSI es extremo, advierte brevemente.
 
-🎯 <b>OBJETIVO 1:3 (LIBERTAD)</b>
-🛑 <b>SL:</b> <code>${slFinal}</code>
-💰 <b>TP:</b> <code>${tpFinal}</code>
+RESPONDE SOLO EN JSON:
+{"validacion": "FUERTE|MODERADA|DEBIL", "comentario": "Tu análisis en 2 frases"}`;
 
-🛡️ <b>Mover a BE en:</b> <code>${beFinal}</code>
-<i>(Cuando toque este precio, protege tu capital)</i>
+    const completion = await groq.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.3-70b-versatile",
+        temperature: 0.1,
+        response_format: { type: "json_object" }
+    });
 
-⚖️ <b>GESTIÓN ($25)</b>
-💎 <b>LOTAJE:</b> <code>${lotajeFinal}</code>
+    return JSON.parse(
+        completion.choices[0]?.message?.content ||
+        '{"validacion":"MODERADA","comentario":"Señal dentro de parámetros normales."}'
+    );
+};
 
-🧠 <b>VISIÓN ORÁCULO:</b>
-<i>"${razon}"</i>
+// ══════════════════════════════════════════════
+//   ENVÍO A TELEGRAM
+// ══════════════════════════════════════════════
+const enviarTelegram = async (mensaje) => {
+    await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+        chat_id: CHAT_ID,
+        text: mensaje,
+        parse_mode: "HTML"
+    });
+};
 
-🌌 <b>Hecho está. Gracias, gracias, gracias.</b>`;
+// ══════════════════════════════════════════════
+//   WEBHOOK PRINCIPAL
+// ══════════════════════════════════════════════
+app.post('/webhook', async (req, res) => {
+    try {
+        const {
+            secret, asset, action, price,
+            sl, tp1, tp2, tp3,
+            tf, rsi, contexto, fuerza
+        } = req.body;
+// 1. SEGURIDAD: validar secret
+        if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
+            console.warn("⚠️ Webhook rechazado: secret inválido");
+            return res.status(403).send('Forbidden');
+        }
 
-        await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
-            chat_id: ID,
-            text: mensajeFinal,
-            parse_mode: "HTML"
-        });
+        // 2. VALIDAR CAMPOS ESENCIALES
+        if (!asset  !action  !price || !sl) {
+            return res.status(400).send('Payload incompleto');
+        }
 
-        res.status(200).send('Sincronia_V10_Completada');
+        const pCurrent  = parseFloat(price);
+        const slNum     = parseFloat(sl);
+        const tp1Num    = parseFloat(tp1);
+        const tp2Num    = parseFloat(tp2);
+        const tp3Num    = parseFloat(tp3);
+        const rsiNum    = parseFloat(rsi || 50);
+        const direccion = action.toUpperCase().includes("BUY") ? "COMPRA" : "VENTA";
+        const dec       = getDecimals(asset);
+
+        console.log(📡 Señal: ${asset} | ${direccion} | ${price} | TF: ${tf});
+
+        // 3. ANÁLISIS IA
+        const ia = await analizarConIA(
+            asset, direccion, price, tf,
+            sl, tp3, rsiNum,
+            contexto  "N/A", fuerza  "N/A"
+        );
+
+        // 4. LOTAJE Y RATIO REAL
+        const lotaje    = calcularLotaje(asset, price, slNum);
+        const distancia = Math.abs(pCurrent - slNum);
+        const ratioReal = tp3Num
+            ? ((Math.abs(tp3Num - pCurrent)) / distancia).toFixed(1)
+            : "3.0";
+
+        // 5. EMOJI DE VALIDACIÓN
+        const validEmoji = ia.validacion === "FUERTE"
+            ? "🔥" : ia.validacion === "DEBIL" ? "⚠️" : "✅";
+
+        // 6. MENSAJE TELEGRAM
+        const headerEmoji = direccion === "COMPRA"
+            ? "🟢 🚀 COMPRA INSTITUCIONAL"
+            : "🔴 🔻 VENTA INSTITUCIONAL";
+
+        const mensaje =
+${headerEmoji}
+
+⚡ <b>ACTIVO:</b> <code>${asset}</code>  |  ⏱ <b>TF:</b> <code>${tf || 'N/A'}</code>
+💵 <b>ENTRADA:</b> <code>${fmt(price, dec)}</code>
+
+🎯 <b>NIVELES (Estructura Real)</b>
+🛑 <b>SL:</b> <code>${fmt(slNum, dec)}</code>
+🎯 <b>TP1 (1:1):</b> <code>${fmt(tp1Num, dec)}</code>
+🎯 <b>TP2 (1:2):</b> <code>${fmt(tp2Num, dec)}</code>
+💰 <b>TP3 (1:${ratioReal}):</b> <code>${fmt(tp3Num, dec)}</code>
+
+📊 <b>CONTEXTO</b>
+📈 Tendencia: <code>${contexto || 'N/A'}</code>  |  RSI: <code>${rsiNum.toFixed(1)}</code>
+
+⚖️ <b>GESTIÓN ($${RIESGO_USD} Riesgo)</b>
+💎 <b>LOTAJE:</b> <code>${lotaje}</code>
+
+${validEmoji} <b>VALIDACIÓN IA [${ia.validacion}]:</b>
+<i>${ia.comentario}</i>
+
+🌌 <i>Opera con disciplina.</i>;
+
+        // 7. ENVIAR
+        await enviarTelegram(mensaje);
+        console.log(✅ Enviado: ${asset} ${direccion});
+        res.status(200).send('OK');
+
     } catch (e) {
-        console.error("Error Latice:", e);
-        res.status(500).send('Error_Sintergico');
+        console.error("❌ Error:", e.message);
+        res.status(500).send('Error');
     }
 });
 
-app.get('/', (req, res) => res.send('Oráculo V10 - Modo Francotirador Activo'));
+// ══════════════════════════════════════════════
+//   ENDPOINT DE SALUD
+// ══════════════════════════════════════════════
+app.get('/', (req, res) => {
+    res.send('🚀 Bot Señales Elite v2.0 - Activo');
+});
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor Listo en Puerto ${PORT}`));
+app.listen(PORT, () => console.log(🚀 Servidor en puerto ${PORT}));
