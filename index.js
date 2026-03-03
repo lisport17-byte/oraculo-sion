@@ -93,7 +93,7 @@ app.post('/webhook', async (req, res) => {
             return res.status(403).send('Forbidden');
         }
 
-        if (!asset  !action  !price || !sl) {
+        if (!asset || !action || !price || !sl) {
             return res.status(400).send('Payload incompleto');
         }
 
@@ -105,12 +105,13 @@ app.post('/webhook', async (req, res) => {
         const rsiNum    = parseFloat(rsi || 50);
         const direccion = action.toUpperCase().includes("BUY") ? "COMPRA" : "VENTA";
         const dec       = getDecimals(asset);
-console.log(Senal recibida: ${asset} | ${direccion} | ${price} | TF: ${tf});
+
+        console.log(`Senal recibida: ${asset} | ${direccion} | ${price} | TF: ${tf}`);
 
         const ia = await analizarConIA(
             asset, direccion, price, tf,
             sl, tp3, rsiNum,
-            contexto  "N/A", fuerza  "N/A"
+            contexto || "N/A", fuerza || "N/A"
         );
 
         const lotaje    = calcularLotaje(asset, price, slNum);
@@ -120,7 +121,7 @@ console.log(Senal recibida: ${asset} | ${direccion} | ${price} | TF: ${tf});
         const validEmoji  = ia.validacion === "FUERTE" ? "🔥" : ia.validacion === "DEBIL" ? "⚠️" : "✅";
         const headerEmoji = direccion === "COMPRA" ? "🟢 🚀 COMPRA INSTITUCIONAL" : "🔴 🔻 VENTA INSTITUCIONAL";
 
-        const mensaje = ${headerEmoji}
+        const mensaje = `${headerEmoji}
 
 ⚡ <b>ACTIVO:</b> <code>${asset}</code>  |  ⏱ <b>TF:</b> <code>${tf || 'N/A'}</code>
 💵 <b>ENTRADA:</b> <code>${fmt(price, dec)}</code>
@@ -140,10 +141,10 @@ console.log(Senal recibida: ${asset} | ${direccion} | ${price} | TF: ${tf});
 ${validEmoji} <b>VALIDACION IA [${ia.validacion}]:</b>
 <i>${ia.comentario}</i>
 
-🌌 <i>Opera con disciplina.</i>;
+🌌 <i>Opera con disciplina.</i>`;
 
         await enviarTelegram(mensaje);
-        console.log(Enviado: ${asset} ${direccion});
+        console.log(`Enviado: ${asset} ${direccion}`);
         res.status(200).send('OK');
 
     } catch (e) {
@@ -157,4 +158,4 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(Servidor en puerto ${PORT}));
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
