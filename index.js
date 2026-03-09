@@ -197,6 +197,13 @@ app.post('/webhook', async (req, res) => {
         resetDiario();
         const { secret, asset, action, price, sl, tp1, tp2, tp3, tf, rsi, contexto, fuerza } = req.body;
 
+        // INTERCEPTOR DEL TRAILING STOP
+        if (req.body.action === "TRAILING") {
+            const msgT = `🚨 <b>LUZ VERDE DISPARA, ASEGURA LA ENERGÍA</b>\n\nActivo: <code>${req.body.asset}</code>\nNivel alcanzado: <b>${req.body.level}</b>\n\n🛡️ Mueve tu Stop Loss ahora mismo a: <code>${req.body.new_sl}</code>`;
+            await enviarTelegram(msgT);
+            return res.status(200).send('TRAILING_OK');
+        }
+
         if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
             return res.status(403).send('Forbidden');
         }
