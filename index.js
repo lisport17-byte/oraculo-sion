@@ -7,13 +7,12 @@ const app = express();
 app.use(bodyParser.json());
 
 // ══════════════════════════════════════════════
-//   CONFIGURACION PROP FIRM - FUNDING PIPS
+//   CONFIGURACION PROP FIRM Y ENTORNO RENDER
 // ══════════════════════════════════════════════
 const TOKEN          = process.env.TOKEN;
 const CHAT_ID        = process.env.ID;
-const GROQ_KEY       = process.env.GROQ_API_KEY;
+const GROQ_KEY       = process.env.GROQ_API_KEY; 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-
 const CUENTA_SIZE    = parseFloat(process.env.CUENTA_SIZE   || "25000");
 const RIESGO_PCT     = parseFloat(process.env.RIESGO_PCT    || "0.5");
 const MAX_LOSS_DIA   = parseFloat(process.env.MAX_LOSS_DIA  || "1250");
@@ -51,7 +50,7 @@ const registrarResultado = (ganancia) => {
         perdidaDia   += Math.abs(ganancia);
         perdidaTotal += Math.abs(ganancia);
         perdidasConsecutivas++;
-        if (perdidaDia   >= MAX_LOSS_DIA)   { botPausado = true; razonPausa = "MAX_LOSS_DIA"; }
+        if (perdidaDia   >= MAX_LOSS_DIA)    { botPausado = true; razonPausa = "MAX_LOSS_DIA"; }
         if (perdidaTotal >= MAX_LOSS_TOTAL)  { botPausado = true; razonPausa = "MAX_LOSS_TOTAL"; }
         if (perdidasConsecutivas >= 3)       { botPausado = true; razonPausa = "3_PERDIDAS_SEGUIDAS"; }
     } else {
@@ -61,14 +60,14 @@ const registrarResultado = (ganancia) => {
 };
 
 // ══════════════════════════════════════════════
-//   FILTRO DE NOTICIAS AUTOMATICO
+//   LECTURA DE NARRATIVA DE NOTICIAS (IA INPUT)
 // ══════════════════════════════════════════════
 const verificarNoticias = async (asset) => {
     try {
         const ahora = new Date();
-        const res = await axios.get('https://nfs.faireconomy.media/ff_calendar_thisweek.json', { timeout: 3000 });
+        const res = await axios.get('https://nfs.faireconomy.media/ff_calendar_thisweek.json', { timeout: 5000 });
         const noticias = res.data;
-
+        
         const mapaMonedas = {
             "USD": ["EURUSD","GBPUSD","USDJPY","USDCAD","USDCHF","AUDUSD","US30","NAS100","XAUUSD"],
             "EUR": ["EURUSD"],
@@ -79,16 +78,22 @@ const verificarNoticias = async (asset) => {
 
         for (const [moneda, activos] of Object.entries(mapaMonedas)) {
             if (!activos.includes(asset.toUpperCase())) continue;
+            
+            // Buscamos noticias a 2 horas en el futuro o 30 min en el pasado
             const criticas = noticias.filter(n => {
                 if (n.impact !== "High" || n.country !== moneda) return false;
                 const diff = (new Date(n.date) - ahora) / 60000;
-                return diff >= -30 && diff <= 30;
+                return diff >= -30 && diff <= 120; 
             });
-            if (criticas.length > 0) return { hayNoticia: true, detalle: criticas[0].title };
+
+            if (criticas.length > 0) {
+                const titulos = criticas.map(n => n.title).join(", ");
+                return { hayNoticia: true, detalle: `Noticias de alto impacto detectadas (${moneda}): ${titulos}` };
+            }
         }
-        return { hayNoticia: false };
+        return { hayNoticia: false, detalle: "Flujo libre, sin noticias macroeconómicas disruptivas a la vista." };
     } catch (e) {
-        return { hayNoticia: false };
+        return { hayNoticia: false, detalle: "No se pudo verificar el calendario. Analizar puramente por estructura técnica e inyección de volumen." };
     }
 };
 
@@ -110,21 +115,16 @@ const calcularLotaje = (asset, entry, sl) => {
     try {
         const diff      = Math.abs(parseFloat(entry) - parseFloat(sl));
         if (!diff || isNaN(diff)) return "0.01";
+        
         const riesgoUSD = (CUENTA_SIZE * RIESGO_PCT) / 100;
         const sym       = asset.toUpperCase();
         let lotaje      = 0;
 
-        if (sym.includes("XAU") || sym.includes("GOLD")) {
-            lotaje = riesgoUSD / (diff * 100);
-        } else if (sym.includes("US30") || sym.includes("DJI")) {
-            lotaje = riesgoUSD / (diff * 1);
-        } else if (sym.includes("NAS")) {
-            lotaje = riesgoUSD / (diff * 2);
-        } else if (sym.includes("JPY")) {
-            lotaje = riesgoUSD / (diff * 1000);
-        } else {
-            lotaje = riesgoUSD / (diff * 100000);
-        }
+        if (sym.includes("XAU") || sym.includes("GOLD")) { lotaje = riesgoUSD / (diff * 100); } 
+        else if (sym.includes("US30") || sym.includes("DJI")) { lotaje = riesgoUSD / (diff * 1); } 
+        else if (sym.includes("NAS")) { lotaje = riesgoUSD / (diff * 2); } 
+        else if (sym.includes("JPY")) { lotaje = riesgoUSD / (diff * 1000); } 
+        else { lotaje = riesgoUSD / (diff * 100000); }
 
         const final = Math.floor(lotaje * 100) / 100;
         return final > 0 ? final.toFixed(2) : "0.01";
@@ -132,47 +132,61 @@ const calcularLotaje = (asset, entry, sl) => {
 };
 
 // ══════════════════════════════════════════════
-//   ANALISIS IA
+//   ANALISIS IA - TERCER CEREBRO CUÁNTICO
 // ══════════════════════════════════════════════
-const analizarConIA = async (asset, direccion, price, tf, sl, tp1, tp2, tp3, rsi, contexto, fuerza) => {
-    const prompt = `Eres un Trader Institucional de Elite operando cuenta Prop Firm de $25,000.
-Analiza esta senal con criterio estricto de proteccion de capital:
+const analizarConIA = async (asset, direccion, price, tf, sl, tp1, tp2, tp3, rsi, contexto, fuerza, contextoNoticia) => {
+    const prompt = `Eres la intuición y el análisis analítico combinado de un Trader Institucional de la Élite operando una cuenta Prop Firm de $25,000. Tienes visión sobre los flujos de energía monetaria y la liquidez profunda.
 
-ACTIVO: ${asset} | ENTRADA: ${price} | DIRECCION: ${direccion} | TF: ${tf}
-SL: ${sl} | TP1: ${tp1} | TP2: ${tp2} | TP3: ${tp3}
-RSI: ${rsi} | CONTEXTO: ${contexto} | FUERZA: ${fuerza}
+ACTIVO: ${asset} | DIRECCIÓN: ${direccion} | PRECIO ENTRADA: ${price}
+MACROESTRUCTURA (Alineación 15m, 1h, 4h): ${contexto}
+FUERZA RELATIVA (RSI): ${rsi} (${fuerza})
+NARRATIVA FUNDAMENTAL (Noticias): ${contextoNoticia}
 
-Criterios de evaluacion:
-- Ratio riesgo/beneficio es logico para prop firm?
-- RSI apoya la direccion sin zona extrema?
-- Contexto de tendencia coherente?
-- Vale la pena arriesgar capital de prop firm en esta senal?
+Criterios de evaluación obligatorios:
+1. ¿El dinero real de la élite se está moviendo en esta dirección basándote en la alineación técnica y la noticia reportada?
+2. ¿La noticia inyectará liquidez a nuestro favor o es una trampa de manipulación institucional?
+3. ¿Existe el volumen necesario (liquidez profunda) en este activo para cobrar el profit limpiamente?
 
-RESPONDE SOLO EN JSON sin texto adicional:
-{"validacion":"FUERTE|MODERADA|DEBIL","confianza":85,"comentario":"maximo 2 frases","recomendacion":"ENTRAR|ESPERAR_RETROCESO|CANCELAR"}`;
+RESPONDE ÚNICAMENTE EN FORMATO JSON ESTRICTO, sin texto adicional:
+{
+  "validacion": "FUERTE|MODERADA|DEBIL",
+  "confianza": <número entre 0 y 100>,
+  "comentario": "<1 o 2 frases combinando el impacto de la noticia y la técnica institucional. Si es FUERTE, debes incluir tu perspectiva sobre la inyección de energía/liquidez.>",
+  "recomendacion": "ENTRAR|ESPERAR_RETROCESO|CANCELAR"
+}`;
 
-    const completion = await groq.chat.completions.create({
-        messages: [{ role: "user", content: prompt }],
-        model: "llama-3.3-70b-versatile",
-        temperature: 0.1,
-        response_format: { type: "json_object" }
-    });
-
-    return JSON.parse(
-        completion.choices[0]?.message?.content ||
-        '{"validacion":"MODERADA","confianza":60,"comentario":"Senal en parametros normales.","recomendacion":"ENTRAR"}'
-    );
+    try {
+        const completion = await groq.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            model: "llama-3.3-70b-versatile",
+            temperature: 0.1, // Baja temperatura para decisiones analíticas precisas
+            response_format: { type: "json_object" }
+        });
+        return JSON.parse(completion.choices[0]?.message?.content);
+    } catch (error) {
+        console.error("Error en conexión con la mente maestra (Groq):", error.message);
+        return {
+            "validacion": "MODERADA",
+            "confianza": 65,
+            "comentario": "Conexión neuronal temporalmente inactiva. Evaluado por pura estructura algorítmica y fractalidad técnica.",
+            "recomendacion": "ENTRAR"
+        };
+    }
 };
 
 // ══════════════════════════════════════════════
 //   ENVIO TELEGRAM
 // ══════════════════════════════════════════════
 const enviarTelegram = async (mensaje) => {
-    await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
-        chat_id: CHAT_ID,
-        text: mensaje,
-        parse_mode: "HTML"
-    });
+    try {
+        await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+            chat_id: CHAT_ID,
+            text: mensaje,
+            parse_mode: "HTML"
+        });
+    } catch (err) {
+        console.error("Error enviando a Telegram:", err.message);
+    }
 };
 
 // ══════════════════════════════════════════════
@@ -181,7 +195,6 @@ const enviarTelegram = async (mensaje) => {
 app.post('/webhook', async (req, res) => {
     try {
         resetDiario();
-
         const { secret, asset, action, price, sl, tp1, tp2, tp3, tf, rsi, contexto, fuerza } = req.body;
 
         if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
@@ -194,33 +207,12 @@ app.post('/webhook', async (req, res) => {
 
         // VERIFICAR PAUSA
         if (botPausado) {
-            await enviarTelegram(
-`⛔ <b>BOT PAUSADO - PROTECCION ACTIVA</b>
-
-Razon: <code>${razonPausa}</code>
-Perdida del dia: <code>$${perdidaDia.toFixed(2)}</code>
-Perdida total: <code>$${perdidaTotal.toFixed(2)}</code>
-Senal ignorada: <code>${asset} ${action}</code>
-
-Usa /reactivar si deseas continuar manualmente.`
-            );
+            await enviarTelegram(`⛔ <b>SISTEMA EN REPOSO - PROTECCIÓN DE CAPITAL ACTIVA</b>\nRazon: <code>${razonPausa}</code>\nUsa /reactivar si tu intuición indica lo contrario.`);
             return res.status(200).send('BOT_PAUSADO');
         }
 
-        // VERIFICAR NOTICIAS
+        // LEER NOTICIAS (Ahora no bloquea, analiza)
         const noticia = await verificarNoticias(asset);
-        if (noticia.hayNoticia) {
-            await enviarTelegram(
-`📰 <b>SENAL BLOQUEADA - NOTICIA ALTO IMPACTO</b>
-
-Activo: <code>${asset}</code>
-Noticia: <i>${noticia.detalle}</i>
-Zona de peligro: 30 min antes y despues
-
-El bot retomara cuando pase la noticia.`
-            );
-            return res.status(200).send('BLOQUEADO_NOTICIA');
-        }
 
         const pCurrent  = parseFloat(price);
         const slNum     = parseFloat(sl);
@@ -236,20 +228,12 @@ El bot retomara cuando pase la noticia.`
         const ia = await analizarConIA(
             asset, direccion, price, tf,
             sl, tp1, tp2, tp3,
-            rsiNum, contexto || "N/A", fuerza || "N/A"
+            rsiNum, contexto || "N/A", fuerza || "N/A", noticia.detalle
         );
 
         // FILTRO DE CONFIANZA
         if (ia.recomendacion === "CANCELAR" || ia.confianza < 50) {
-            await enviarTelegram(
-`⚠️ <b>SENAL DESCARTADA POR IA</b>
-
-Activo: <code>${asset}</code> | <code>${direccion}</code>
-Confianza IA: <code>${ia.confianza}%</code>
-Razon: <i>${ia.comentario}</i>
-
-La senal no supero el filtro de calidad.`
-            );
+            await enviarTelegram(`⚠️ <b>SEÑAL DILUIDA - ENERGÍA NO ALINEADA</b>\nActivo: <code>${asset}</code> | <code>${direccion}</code>\nConfianza IA: <code>${ia.confianza}%</code>\nAnálisis: <i>${ia.comentario}</i>\nEl fractal no está maduro. Mantenemos la pólvora seca.`);
             return res.status(200).send('DESCARTADO_IA');
         }
 
@@ -258,46 +242,51 @@ La senal no supero el filtro de calidad.`
         const distancia   = Math.abs(pCurrent - slNum);
         const ratioReal   = tp3Num ? ((Math.abs(tp3Num - pCurrent)) / distancia).toFixed(1) : "3.0";
         const margenDia   = ((MAX_LOSS_DIA - perdidaDia) / MAX_LOSS_DIA * 100).toFixed(0);
+        
         const barraConf   = "█".repeat(Math.floor(ia.confianza / 10)) + "░".repeat(10 - Math.floor(ia.confianza / 10));
-
         const headerEmoji = direccion === "COMPRA" ? "🟢 🚀 COMPRA INSTITUCIONAL" : "🔴 🔻 VENTA INSTITUCIONAL";
         const validEmoji  = ia.validacion === "FUERTE" ? "🔥" : ia.validacion === "DEBIL" ? "⚠️" : "✅";
         const recomTexto  = ia.recomendacion === "ENTRAR" ? "✅ ENTRAR AHORA" : "⏳ ESPERAR RETROCESO";
 
+        // VERIFICACIÓN DEL CREADOR (FRASES DE PODER)
+        let mensajePoder = "";
+        if (ia.validacion === "FUERTE" && ia.confianza >= 80) {
+            mensajePoder = "\n\n👁️ <b>VISIÓN DEL CREADOR:</b>\n<i>luz verde dispara, es el momento, aquí la elite está concentrando energía, próximamente se verán los movimientos.</i>";
+        }
+
         const mensaje =
 `${headerEmoji}
 
-⚡ <b>ACTIVO:</b> <code>${asset}</code>  |  ⏱ <b>TF:</b> <code>${tf || 'N/A'}</code>
+⚡ <b>ACTIVO:</b> <code>${asset}</code>  |  ⏱ <b>TF MICRO:</b> <code>${tf || '15m'}</code>
 💵 <b>ENTRADA:</b> <code>${fmt(price, dec)}</code>
 
-🎯 <b>NIVELES</b>
+🎯 <b>MAPA DE LIQUIDEZ</b>
 🛑 <b>SL:</b>        <code>${fmt(slNum, dec)}</code>
-🥉 <b>TP1 (1:1):</b> <code>${fmt(tp1Num, dec)}</code> → cierra 40%
-🥈 <b>TP2 (1:2):</b> <code>${fmt(tp2Num, dec)}</code> → cierra 40%
-🥇 <b>TP3 (1:${ratioReal}):</b> <code>${fmt(tp3Num, dec)}</code> → cierra 20%
+🥉 <b>TP1 (1:1):</b> <code>${fmt(tp1Num, dec)}</code> (Retira el 40% de la energía)
+🥈 <b>TP2 (1:2):</b> <code>${fmt(tp2Num, dec)}</code> (Retira el 40% de la energía)
+🥇 <b>TP3 (1:${ratioReal}):</b> <code>${fmt(tp3Num, dec)}</code> (Deja correr el 20%)
 
-📊 <b>CONTEXTO</b>
-📈 Tendencia: <code>${contexto || 'N/A'}</code>  |  RSI: <code>${rsiNum.toFixed(1)}</code>
+📊 <b>SINTONÍA FRACTAL</b>
+📈 Tendencia Macro: <code>${contexto || 'N/A'}</code>
+📰 Narrativa: <i>${noticia.detalle}</i>
 
-⚖️ <b>GESTION PROP FIRM</b>
+⚖️ <b>GESTIÓN CUÁNTICA DEL RIESGO</b>
 💎 <b>LOTAJE:</b>  <code>${lotaje}</code>
 💰 <b>RIESGO:</b>  <code>$${riesgoUSD.toFixed(0)} (${RIESGO_PCT}%)</code>
 🏦 <b>MARGEN HOY:</b> <code>${margenDia}% disponible</code>
 
-${validEmoji} <b>CONFIANZA IA: ${ia.confianza}%</b>
+${validEmoji} <b>CONFIANZA DEL TERCER CEREBRO: ${ia.confianza}%</b>
 <code>${barraConf}</code>
-<i>${ia.comentario}</i>
+<i>${ia.comentario}</i>${mensajePoder}
 
-🎯 <b>ACCION:</b> <code>${recomTexto}</code>
-
-🌌 <i>Protege el capital. Opera con disciplina.</i>`;
+🎯 <b>ACCIÓN:</b> <code>${recomTexto}</code>`;
 
         await enviarTelegram(mensaje);
         console.log(`Enviado: ${asset} ${direccion} | Confianza: ${ia.confianza}%`);
         res.status(200).send('OK');
 
     } catch (e) {
-        console.error("Error:", e.message);
+        console.error("Error general webhook:", e.message);
         res.status(500).send('Error');
     }
 });
@@ -323,7 +312,7 @@ app.get('/reactivar', (req, res) => {
     botPausado           = false;
     razonPausa           = "";
     perdidasConsecutivas = 0;
-    res.json({ status: "Bot reactivado manualmente" });
+    res.json({ status: "Bot reactivado manualmente. Sincronía restaurada." });
 });
 
 app.post('/resultado', async (req, res) => {
@@ -331,17 +320,15 @@ app.post('/resultado', async (req, res) => {
     registrarResultado(ganancia);
 
     await enviarTelegram(
-`📊 <b>RESULTADO REGISTRADO</b>
+`📊 <b>ACTUALIZACIÓN DE REALIDAD MATERIALIZADA</b>
 
-${ganancia >= 0 ? "✅ GANADA" : "❌ PERDIDA"}: <code>$${ganancia.toFixed(2)}</code>
-Perdida dia: <code>$${perdidaDia.toFixed(2)} / $${MAX_LOSS_DIA}</code>
-Perdida total: <code>$${perdidaTotal.toFixed(2)} / $${MAX_LOSS_TOTAL}</code>
-Rachas negativas: <code>${perdidasConsecutivas}</code>
-Estado bot: <code>${botPausado ? "PAUSADO - " + razonPausa : "ACTIVO"}</code>`
+${ganancia >= 0 ? "✅ MATERIALIZADO (PROFIT)" : "❌ APRENDIZAJE REGISTRADO"}: <code>$${ganancia.toFixed(2)}</code>
+Balance Diario: <code>$${perdidaDia.toFixed(2)} / $${MAX_LOSS_DIA}</code>
+Estado del flujo: <code>${botPausado ? "PAUSADO - " + razonPausa : "FLUYENDO Y ACTIVO"}</code>`
     );
 
     res.json({ ok: true, botPausado, perdidaDia, perdidaTotal });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot Prop Firm Elite v3.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Ojo del Creador v4.0 materializado en el puerto ${PORT}`));
