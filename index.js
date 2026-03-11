@@ -3,10 +3,19 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const Groq = require('groq-sdk');
 const cors = require('cors');
-app.use(cors()); // Esto abre el portal para tu archivo HTML
 
+// PRIMERO creamos la matriz (la app)
 const app = express();
+
+// LUEGO le inyectamos las herramientas (cors y bodyParser)
+app.use(cors()); // Esto abre el portal para tu archivo HTML
 app.use(bodyParser.json());
+
+// ══════════════════════════════════════════════
+//   CONFIGURACIÓN PROP FIRM - FUNDING PIPS
+// ══════════════════════════════════════════════
+const TOKEN          = process.env.TOKEN;
+// ... (de aquí hacia abajo todo tu código está perfecto) ...
 
 // ══════════════════════════════════════════════
 //   CONFIGURACIÓN PROP FIRM - FUNDING PIPS
