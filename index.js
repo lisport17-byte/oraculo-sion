@@ -2,6 +2,8 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const Groq = require('groq-sdk');
+const cors = require('cors');
+app.use(cors()); // Esto abre el portal para tu archivo HTML
 
 const app = express();
 app.use(bodyParser.json());
