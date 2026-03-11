@@ -4,18 +4,12 @@ const axios = require('axios');
 const Groq = require('groq-sdk');
 const cors = require('cors');
 
-// PRIMERO creamos la matriz (la app)
+// PRIMERO creamos la app
 const app = express();
 
-// LUEGO le inyectamos las herramientas (cors y bodyParser)
-app.use(cors()); // Esto abre el portal para tu archivo HTML
+// LUEGO le inyectamos los portales
+app.use(cors()); 
 app.use(bodyParser.json());
-
-// ══════════════════════════════════════════════
-//   CONFIGURACIÓN PROP FIRM - FUNDING PIPS
-// ══════════════════════════════════════════════
-const TOKEN          = process.env.TOKEN;
-// ... (de aquí hacia abajo todo tu código está perfecto) ...
 
 // ══════════════════════════════════════════════
 //   CONFIGURACIÓN PROP FIRM - FUNDING PIPS
@@ -48,7 +42,6 @@ const resetDiario = () => {
         fechaActual          = hoy;
         perdidaDia           = 0;
         operacionesDia       = 0;
-        // No reseteamos perdidasConsecutivas aquí para que la IA mantenga la memoria entre días
         if (botPausado && razonPausa === "MAX_LOSS_DIA") {
             botPausado = false;
             razonPausa = "";
@@ -64,7 +57,7 @@ const registrarResultado = (ganancia) => {
         if (perdidaDia   >= MAX_LOSS_DIA)    { botPausado = true; razonPausa = "MAX_LOSS_DIA"; }
         if (perdidaTotal >= MAX_LOSS_TOTAL)  { botPausado = true; razonPausa = "MAX_LOSS_TOTAL"; }
     } else {
-        perdidasConsecutivas = 0; // Se resetea la mala racha al ganar
+        perdidasConsecutivas = 0;
     }
     operacionesDia++;
 };
@@ -92,7 +85,7 @@ const verificarNoticias = async (asset) => {
             const criticas = noticias.filter(n => {
                 if (n.impact !== "High" || n.country !== moneda) return false;
                 const diff = (new Date(n.date) - ahora) / 60000;
-                return diff >= -30 && diff <= 120; // 30 min en el pasado, 2h en el futuro
+                return diff >= -30 && diff <= 120;
             });
 
             if (criticas.length > 0) {
@@ -227,7 +220,6 @@ app.post('/webhook', async (req, res) => {
             return res.status(200).send('BOT_PAUSADO');
         }
 
-        // NOTICIAS - AHORA SOLO RECOLECTA, NO BLOQUEA CIEGAMENTE
         const noticia = await verificarNoticias(asset);
 
         const pCurrent  = parseFloat(price);
@@ -240,7 +232,6 @@ app.post('/webhook', async (req, res) => {
         const dec       = getDecimals(asset);
         const riesgoUSD = (CUENTA_SIZE * RIESGO_PCT) / 100;
 
-        // ANÁLISIS IA
         const ia = await analizarConIA(
             asset, direccion, price, tf,
             sl, tp1, tp2, tp3,
@@ -252,7 +243,6 @@ app.post('/webhook', async (req, res) => {
             return res.status(200).send('DESCARTADO_IA');
         }
 
-        // CÁLCULOS
         const lotaje      = calcularLotaje(asset, price, slNum);
         const distancia   = Math.abs(pCurrent - slNum);
         const ratioReal   = tp3Num ? ((Math.abs(tp3Num - pCurrent)) / distancia).toFixed(1) : "3.0";
@@ -262,7 +252,6 @@ app.post('/webhook', async (req, res) => {
         const headerEmoji = direccion === "COMPRA" ? "🟢 🚀 COMPRA INSTITUCIONAL" : "🔴 🔻 VENTA INSTITUCIONAL";
         const validEmoji  = ia.validacion === "FUERTE" ? "🔥" : ia.validacion === "DEBIL" ? "⚠️" : "✅";
 
-        // EL MENSAJE CREADOR
         let mensajePoder = "";
         if (ia.validacion === "FUERTE" && ia.confianza >= 75) {
             mensajePoder = "\n\n👁️ <b>LA VISIÓN:</b>\n<i>luz verde dispara, es el momento, aquí la elite está concentrando energía, próximamente se verán los movimientos.</i>";
