@@ -36,6 +36,9 @@ let fechaActual          = new Date().toDateString();
 let botPausado           = false;
 let razonPausa           = "";
 
+// 🔥 NUEVO: Memoria a corto plazo de los activos y sus comportamientos
+let historialTrades      = []; 
+
 const resetDiario = () => {
     const hoy = new Date().toDateString();
     if (hoy !== fechaActual) {
@@ -49,7 +52,8 @@ const resetDiario = () => {
     }
 };
 
-const registrarResultado = (ganancia) => {
+// 🔥 NUEVO: Recibe el activo y el motivo para guardarlos en la memoria
+const registrarResultado = (ganancia, asset, motivo) => {
     if (ganancia < 0) {
         perdidaDia   += Math.abs(ganancia);
         perdidaTotal += Math.abs(ganancia);
@@ -60,6 +64,18 @@ const registrarResultado = (ganancia) => {
         perdidasConsecutivas = 0;
     }
     operacionesDia++;
+
+    // Inyectar a la memoria adaptativa
+    if (asset && asset !== "DESCONOCIDO") {
+        historialTrades.unshift({ 
+            activo: asset.toUpperCase(), 
+            resultado: ganancia >= 0 ? 'WIN' : 'LOSS', 
+            monto: ganancia, 
+            contexto: motivo 
+        });
+        // Limitamos la memoria a los últimos 20 trades para mantener la agilidad
+        if (historialTrades.length > 20) historialTrades.pop();
+    }
 };
 
 // ══════════════════════════════════════════════
@@ -134,27 +150,35 @@ const calcularLotaje = (asset, entry, sl) => {
 };
 
 // ══════════════════════════════════════════════
-//   CEREBRO IA (GROQ + AUTOAPRENDIZAJE)
+//   CEREBRO IA (EVOLUCIONADO CON HISTORIAL)
 // ══════════════════════════════════════════════
 const analizarConIA = async (asset, direccion, price, tf, sl, tp1, tp2, tp3, rsi, contexto, fuerza, contextoFundamental) => {
-    const prompt = `Eres un Agente de IA Cuántico y Trader Institucional de Élite operando una prueba de fondeo Funding Pips de $25,000. Tu meta es proteger el capital y fluir con la energía del mercado.
+    
+    // 🔥 NUEVO: Buscar en la memoria qué ha pasado específicamente con ESTE activo
+    const historiaActivo = historialTrades.filter(t => t.activo === asset.toUpperCase());
+    let textoMemoria = historiaActivo.length > 0 
+        ? historiaActivo.map((t, i) => `Trade Pasado ${i+1}: Terminó en ${t.resultado} porque hubo "${t.contexto}"`).join(" | ")
+        : "Sin historial reciente en este activo. Análisis neutro.";
+
+    const prompt = `Eres un Agente de IA Cuántico y Trader Institucional operando una prueba de fondeo Funding Pips de $25,000. Tu meta es proteger el capital y fluir con la energía del mercado.
 
 ACTIVO: ${asset} | DIRECCIÓN: ${direccion}
-CONTEXTO TÉCNICO (Sinergia 15m/1H/4H): ${contexto}
-FUERZA DEL IMPULSO (RSI): ${rsi} (${fuerza})
+CONTEXTO TÉCNICO: ${contexto} | RSI: ${rsi} (${fuerza})
 NOTICIAS FUNDAMENTALES: ${contextoFundamental}
-MEMORIA CUÁNTICA: Tienes una racha actual de ${perdidasConsecutivas} operaciones perdidas consecutivas.
 
-Criterios obligatorios:
-1. Si tienes pérdidas recientes (>1), sé extremadamente riguroso y exige condiciones técnicas perfectas para no quemar el 5% diario.
-2. Evalúa la noticia fundamental: ¿Aporta volatilidad a favor de la estructura o es manipulación para cazar Stop Loss?
-3. ¿El ratio riesgo/beneficio es idóneo para una cuenta Prop Firm?
+👁️ MEMORIA RECIENTE EN ${asset}: ${textoMemoria}
+Racha negativa global actual del bot: ${perdidasConsecutivas}
+
+Criterios de Autoaprendizaje Obligatorios:
+1. Si la MEMORIA RECIENTE indica que en ${asset} hubo "Manipulación (Tocó SL y luego fue a TP)", el mercado está cazando liquidez. Exige un retroceso mucho mayor, advierte sobre el Stop Loss, o descarta si no es claro.
+2. Si tienes pérdidas recientes (>1) a nivel global, sé extremadamente riguroso y exige condiciones técnicas perfectas.
+3. Evalúa si la noticia fundamental aporta volatilidad a favor.
 
 RESPONDE ÚNICAMENTE EN JSON ESTRICTO:
 {
   "validacion": "FUERTE|MODERADA|DEBIL",
   "confianza": <número 0 a 100>,
-  "comentario": "<Analiza brevemente la alineación entre la técnica, la noticia y tu gestión de riesgo actual>",
+  "comentario": "<Analiza la alineación cruzando la técnica actual con la MEMORIA RECIENTE de ${asset}>",
   "recomendacion": "ENTRAR|ESPERAR_RETROCESO|CANCELAR"
 }`;
 
@@ -204,7 +228,6 @@ app.post('/webhook', async (req, res) => {
             return res.status(403).send('Forbidden');
         }
 
-        // 🛡️ INTERCEPTOR DEL TRAILING STOP
         if (action === "TRAILING") {
             const msgT = `🚨 <b>LUZ VERDE, ASEGURA LA ENERGÍA</b>\n\nActivo: <code>${asset}</code>\nExpansión alcanzada: <b>${level}</b>\n\n🛡️ Mueve tu Stop Loss en MT5/cTrader ahora mismo a: <code>${new_sl}</code>`;
             await enviarTelegram(msgT);
@@ -239,7 +262,7 @@ app.post('/webhook', async (req, res) => {
         );
 
         if (ia.recomendacion === "CANCELAR" || ia.confianza < 50) {
-            await enviarTelegram(`⚠️ <b>SEÑAL DESCARTADA (FILTRO IA)</b>\nActivo: <code>${asset}</code> | <code>${direccion}</code>\nAnálisis: <i>${ia.comentario}</i>\nProtegiendo capital de Funding Pips.`);
+            await enviarTelegram(`⚠️ <b>SEÑAL DESCARTADA (APRENDIZAJE IA)</b>\nActivo: <code>${asset}</code> | <code>${direccion}</code>\nAnálisis: <i>${ia.comentario}</i>\nProtegiendo capital de Funding Pips.`);
             return res.status(200).send('DESCARTADO_IA');
         }
 
@@ -318,15 +341,23 @@ app.get('/reactivar', (req, res) => {
 
 app.post('/resultado', async (req, res) => {
     const ganancia = parseFloat(req.body.ganancia);
-    registrarResultado(ganancia);
+    
+    // 🔥 NUEVO: Recibimos el Activo y el Motivo desde el Sincronizador HTML
+    const asset = req.body.asset || "DESCONOCIDO";
+    const motivo = req.body.motivo || "Flujo normal";
+
+    registrarResultado(ganancia, asset, motivo);
 
     await enviarTelegram(
-`📊 <b>ACTUALIZACIÓN DE REALIDAD MATERIALIZADA</b>
+`🧠 <b>APRENDIZAJE INTEGRADO EN LA MATRIZ</b>
 
-${ganancia >= 0 ? "✅ MATERIALIZADO (PROFIT)" : "❌ APRENDIZAJE REGISTRADO"}: <code>$${ganancia.toFixed(2)}</code>
+📊 <b>Activo:</b> <code>${asset.toUpperCase()}</code>
+💵 <b>Resultado:</b> <code>$${ganancia.toFixed(2)}</code>
+📝 <b>Contexto Registrado:</b> <i>${motivo}</i>
+
 Balance Diario: <code>$${perdidaDia.toFixed(2)} / $${MAX_LOSS_DIA}</code>
 Balance Total: <code>$${perdidaTotal.toFixed(2)} / $${MAX_LOSS_TOTAL}</code>
-Racha negativa actual: <code>${perdidasConsecutivas}</code> (La IA ajustará su exigencia)
+Racha negativa global: <code>${perdidasConsecutivas}</code>
 Estado de energía: <code>${botPausado ? "PAUSADO - " + razonPausa : "FLUYENDO Y ACTIVO"}</code>`
     );
 
@@ -334,4 +365,4 @@ Estado de energía: <code>${botPausado ? "PAUSADO - " + razonPausa : "FLUYENDO Y
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Agente Cuántico v4.0 materializado en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Agente Cuántico v5.0 materializado en puerto ${PORT}`));
