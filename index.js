@@ -22,6 +22,7 @@ const CUENTA_SIZE    = parseFloat(process.env.CUENTA_SIZE   || "25000");
 const RIESGO_PCT     = parseFloat(process.env.RIESGO_PCT    || "0.5");
 const MAX_LOSS_DIA   = parseFloat(process.env.MAX_LOSS_DIA  || "1250");
 const MAX_LOSS_TOTAL = parseFloat(process.env.MAX_LOSS_TOTAL|| "2500");
+const META_PROFIT    = 2000; // 8% de 25k en Funding Pips (Objetivo)
 
 const groq = new Groq({ apiKey: GROQ_KEY });
 
@@ -36,8 +37,16 @@ let fechaActual          = new Date().toDateString();
 let botPausado           = false;
 let razonPausa           = "";
 
-// 🔥 NUEVO: Memoria a corto plazo de los activos y sus comportamientos
+// Memoria a corto plazo de los activos y sus comportamientos
 let historialTrades      = []; 
+
+// 🔥 NUEVOS CONTADORES SEMANALES Y GLOBALES (Libro Contable)
+let balanceGlobal             = 0; // Dinero neto ganado/perdido en total
+let senalesEnviadasSemana     = 0;
+let tradesGanadosSemana       = 0;
+let tradesPerdidosSemana      = 0;
+let gananciaBrutaSemana       = 0;
+let perdidaBrutaSemana        = 0;
 
 const resetDiario = () => {
     const hoy = new Date().toDateString();
@@ -52,15 +61,23 @@ const resetDiario = () => {
     }
 };
 
-// 🔥 NUEVO: Recibe el activo y el motivo para guardarlos en la memoria
+// Recibe el activo y el motivo para guardarlos en la memoria y contabilidad
 const registrarResultado = (ganancia, asset, motivo) => {
+    // Actualización de contabilidad global y semanal
+    balanceGlobal += ganancia;
+
     if (ganancia < 0) {
-        perdidaDia   += Math.abs(ganancia);
-        perdidaTotal += Math.abs(ganancia);
+        perdidaDia          += Math.abs(ganancia);
+        perdidaTotal        += Math.abs(ganancia);
+        perdidaBrutaSemana  += Math.abs(ganancia);
+        tradesPerdidosSemana++;
         perdidasConsecutivas++;
+        
         if (perdidaDia   >= MAX_LOSS_DIA)    { botPausado = true; razonPausa = "MAX_LOSS_DIA"; }
         if (perdidaTotal >= MAX_LOSS_TOTAL)  { botPausado = true; razonPausa = "MAX_LOSS_TOTAL"; }
     } else {
+        gananciaBrutaSemana += ganancia;
+        if (ganancia > 0) tradesGanadosSemana++; // BE no suma al winrate negativo, pero tampoco cuenta como ganado puro
         perdidasConsecutivas = 0;
     }
     operacionesDia++;
@@ -69,7 +86,7 @@ const registrarResultado = (ganancia, asset, motivo) => {
     if (asset && asset !== "DESCONOCIDO") {
         historialTrades.unshift({ 
             activo: asset.toUpperCase(), 
-            resultado: ganancia >= 0 ? 'WIN' : 'LOSS', 
+            resultado: ganancia > 0 ? 'WIN' : (ganancia < 0 ? 'LOSS' : 'BE'), 
             monto: ganancia, 
             contexto: motivo 
         });
@@ -154,7 +171,7 @@ const calcularLotaje = (asset, entry, sl) => {
 // ══════════════════════════════════════════════
 const analizarConIA = async (asset, direccion, price, tf, sl, tp1, tp2, tp3, rsi, contexto, fuerza, contextoFundamental) => {
     
-    // 🔥 NUEVO: Buscar en la memoria qué ha pasado específicamente con ESTE activo
+    // Buscar en la memoria qué ha pasado específicamente con ESTE activo
     const historiaActivo = historialTrades.filter(t => t.activo === asset.toUpperCase());
     let textoMemoria = historiaActivo.length > 0 
         ? historiaActivo.map((t, i) => `Trade Pasado ${i+1}: Terminó en ${t.resultado} porque hubo "${t.contexto}"`).join(" | ")
@@ -228,6 +245,7 @@ app.post('/webhook', async (req, res) => {
             return res.status(403).send('Forbidden');
         }
 
+        // 🛡️ INTERCEPTOR DEL TRAILING STOP
         if (action === "TRAILING") {
             const msgT = `🚨 <b>LUZ VERDE, ASEGURA LA ENERGÍA</b>\n\nActivo: <code>${asset}</code>\nExpansión alcanzada: <b>${level}</b>\n\n🛡️ Mueve tu Stop Loss en MT5/cTrader ahora mismo a: <code>${new_sl}</code>`;
             await enviarTelegram(msgT);
@@ -265,6 +283,9 @@ app.post('/webhook', async (req, res) => {
             await enviarTelegram(`⚠️ <b>SEÑAL DESCARTADA (APRENDIZAJE IA)</b>\nActivo: <code>${asset}</code> | <code>${direccion}</code>\nAnálisis: <i>${ia.comentario}</i>\nProtegiendo capital de Funding Pips.`);
             return res.status(200).send('DESCARTADO_IA');
         }
+
+        // 🔥 CONTABILIZAMOS LA SEÑAL ENVIADA EN LA SEMANA
+        senalesEnviadasSemana++;
 
         const lotaje      = calcularLotaje(asset, price, slNum);
         const distancia   = Math.abs(pCurrent - slNum);
@@ -342,7 +363,7 @@ app.get('/reactivar', (req, res) => {
 app.post('/resultado', async (req, res) => {
     const ganancia = parseFloat(req.body.ganancia);
     
-    // 🔥 NUEVO: Recibimos el Activo y el Motivo desde el Sincronizador HTML
+    // Recibimos el Activo y el Motivo desde el Sincronizador HTML
     const asset = req.body.asset || "DESCONOCIDO";
     const motivo = req.body.motivo || "Flujo normal";
 
@@ -364,5 +385,43 @@ Estado de energía: <code>${botPausado ? "PAUSADO - " + razonPausa : "FLUYENDO Y
     res.json({ ok: true, botPausado, perdidaDia, perdidaTotal, perdidasConsecutivas });
 });
 
+// 🔥 NUEVA RUTA PARA EL CIERRE CONTABLE SEMANAL
+app.post('/cierre-semana', async (req, res) => {
+    const balanceNetoSemanal = gananciaBrutaSemana - perdidaBrutaSemana;
+    const totalTrades = tradesGanadosSemana + tradesPerdidosSemana;
+    const winRate = totalTrades > 0 ? ((tradesGanadosSemana / totalTrades) * 100).toFixed(1) : 0;
+    const progreso = ((balanceGlobal / META_PROFIT) * 100).toFixed(1);
+    const restante = META_PROFIT - balanceGlobal;
+
+    const mensajeCierre = 
+`📑 <b>LIBRO CONTABLE: CIERRE SEMANAL</b> 📑
+
+📡 <b>Señales Emitidas por la IA:</b> <code>${senalesEnviadasSemana}</code>
+📊 <b>Trades Ejecutados:</b> <code>${totalTrades}</code>
+✅ <b>Ganados:</b> ${tradesGanadosSemana} | ❌ <b>Perdidos:</b> ${tradesPerdidosSemana}
+🎯 <b>Win Rate de Ejecución:</b> <code>${winRate}%</code>
+
+💵 <b>Ganancia Bruta:</b> <code>+$${gananciaBrutaSemana.toFixed(2)}</code>
+🩸 <b>Pérdida Bruta:</b> <code>-$${perdidaBrutaSemana.toFixed(2)}</code>
+🏦 <b>BALANCE NETO SEMANAL:</b> <b>$${balanceNetoSemanal.toFixed(2)}</b>
+
+📈 <b>PROGRESO FUNDING PIPS (Objetivo $2,000)</b>
+Balance Total Acumulado: <code>$${balanceGlobal.toFixed(2)}</code> (${progreso}%)
+Capital Restante para Fondeo: <code>$${restante > 0 ? restante.toFixed(2) : "¡META ALCANZADA! 🏆"}</code>
+
+<i>"Un profesional domina sus números. La energía y los contadores semanales se han reiniciado para el lunes. Así es y así será gracias, gracias, gracias."</i>`;
+
+    await enviarTelegram(mensajeCierre);
+
+    // Reiniciar contadores de la semana (Mantenemos intacto el balanceGlobal y la memoria)
+    senalesEnviadasSemana = 0;
+    tradesGanadosSemana = 0;
+    tradesPerdidosSemana = 0;
+    gananciaBrutaSemana = 0;
+    perdidaBrutaSemana = 0;
+
+    res.json({ ok: true, mensaje: "Libro contable cerrado con éxito." });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Agente Cuántico v5.0 materializado en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Agente Financiero Cuántico materializado en puerto ${PORT}`));
